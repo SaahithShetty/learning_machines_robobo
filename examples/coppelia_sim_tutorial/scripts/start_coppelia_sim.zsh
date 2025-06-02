@@ -5,5 +5,5 @@
 # If you want to run in headless mode, specify `-h` as a third argument
 ${1:?"Specify the scene you want to load as a first argument"}
 
-# Presumes you have CoppeliaSim extracted to ./coppeliaSim.app
-./coppeliaSim.app/Contents/MacOS/coppeliaSim "$1" $3 "-GzmqRemoteApi.rpcPort=${2:-23000}"
+# Presumes you have CoppeliaSim extracted to the main repository folder
+../../coppeliaSim.app/Contents/MacOS/coppeliaSim "$1" $3 "-GzmqRemoteApi.rpcPort=${2:-23000}"
