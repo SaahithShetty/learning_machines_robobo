@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # replace localhost with the port you see on the smartphone
-export ROS_MASTER_URI="http://localhost:11311"
+# The IP should match what's displayed on the Robobo app screen (top left)
+export ROS_MASTER_URI="http://10.15.3.226:11311"
 
 # You want your local IP, usually starting with 192.168, following RFC1918
 # Windows powershell:
@@ -9,4 +10,5 @@ export ROS_MASTER_URI="http://localhost:11311"
 #    hostname -I | awk '{print $1}'
 # macOS:
 #    ipconfig getifaddr en1
-export COPPELIA_SIM_IP="192.168.0.165"
+# For Docker Desktop on Mac, use host.docker.internal to access the host
+export COPPELIA_SIM_IP="host.docker.internal"
