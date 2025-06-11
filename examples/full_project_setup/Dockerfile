@@ -5,15 +5,6 @@ FROM ros:noetic
 EXPOSE 45100
 EXPOSE 45101
 
-# Fix ROS GPG key issue - complete repository rebuild
-RUN apt-get update -y || true && \
-    apt-get install -y curl gnupg lsb-release && \
-    rm -f /etc/apt/sources.list.d/ros*.list && \
-    curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key | gpg --dearmor -o /usr/share/keyrings/ros-archive-keyring.gpg && \
-    echo "deb [signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros/ubuntu $(lsb_release -cs) main" > /etc/apt/sources.list.d/ros-latest.list && \
-    apt-get update -y && \
-    rm -rf /var/lib/apt/lists/*
-
 RUN apt-get update -y && apt-get install -y python3 python3-pip git && rm -rf /var/lib/apt/lists/*
 
 # Install dependencies.

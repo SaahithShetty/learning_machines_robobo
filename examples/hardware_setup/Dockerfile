@@ -1,10 +1,5 @@
 FROM ros:noetic
 
-# Properly update the ROS keys by using curl to get the new key
-RUN apt-get update && apt-get install -y curl && \
-    curl -s https://raw.githubusercontent.com/ros/rosdistro/master/ros.key | apt-key add - && \
-    apt-get clean
-
 # These are some extra dependencies we need to use the Robobo, don't worry about it.
 RUN apt-get update -y && apt-get install ffmpeg libsm6 libxext6 ros-noetic-opencv-apps dos2unix -y && rm -rf /var/lib/apt/lists/*
 
