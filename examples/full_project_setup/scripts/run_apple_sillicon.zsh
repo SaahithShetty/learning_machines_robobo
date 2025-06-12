@@ -9,6 +9,8 @@ show_usage() {
     echo "Commands:"
     echo "  train <method> [args...]     - Train RL agent (simulation)"
     echo "  train-hw <method> [args...]  - Train RL agent (hardware)"
+    echo "  baseline <method> [args...]  - Run baseline algorithm (simulation)"
+    echo "  baseline-hw <method> [args...] - Run baseline algorithm (hardware)"
     echo "  run [args...]                - Run custom command"
     echo "  rebuild                      - Force rebuild Docker image"
     echo "  skip-build <command>         - Skip build and run command"
@@ -19,9 +21,15 @@ show_usage() {
     echo "  qlearning                - Q-Learning (tabular)"
     echo "  actor_critic             - Actor-Critic (A2C)"
     echo ""
+    echo "Baseline Methods:"
+    echo "  obstacle_avoidance       - Advanced rule-based obstacle avoidance"
+    echo "  wall_following           - Wall-following algorithm"
+    echo ""
     echo "Examples:"
     echo "  $0 train policy_gradient --episodes 300 --learning-rate 0.0005"
     echo "  $0 train-hw dqn --episodes 500 --batch-size 64"
+    echo "  $0 baseline obstacle_avoidance --duration 120 --max-distance 10"
+    echo "  $0 baseline-hw wall_following --duration 60 --wall-distance 0.3"
     echo "  $0 train qlearning --episodes 1000 --epsilon-decay 0.995"
     echo "  $0 train actor_critic --episodes 400 --gamma 0.99"
     echo ""
@@ -88,6 +96,64 @@ case $COMMAND in
             *)
                 echo "Error: Unknown RL method '$METHOD'"
                 echo "Available methods: policy_gradient, dqn, qlearning, actor_critic"
+                exit 1
+                ;;
+        esac
+        ;;
+    baseline)
+        if [ $# -eq 0 ]; then
+            echo "Error: No baseline method specified"
+            echo ""
+            show_usage
+            exit 1
+        fi
+        
+        METHOD=$1
+        shift
+        BASELINE_ARGS="$@"
+        
+        # Validate baseline method
+        case $METHOD in
+            obstacle_avoidance|wall_following)
+                echo "Running baseline $METHOD algorithm (simulation) with arguments: $BASELINE_ARGS"
+                if [ "$METHOD" = "obstacle_avoidance" ]; then
+                    DOCKER_CMD="python3 /root/catkin_ws/src/learning_machines/scripts/task0_controller.py --simulation --method obstacle_avoidance_task1 $BASELINE_ARGS"
+                else
+                    DOCKER_CMD="python3 /root/catkin_ws/src/learning_machines/scripts/task0_controller.py --simulation --method wall_following_algorithm $BASELINE_ARGS"
+                fi
+                ;;
+            *)
+                echo "Error: Unknown baseline method '$METHOD'"
+                echo "Available methods: obstacle_avoidance, wall_following"
+                exit 1
+                ;;
+        esac
+        ;;
+    baseline-hw)
+        if [ $# -eq 0 ]; then
+            echo "Error: No baseline method specified"
+            echo ""
+            show_usage
+            exit 1
+        fi
+        
+        METHOD=$1
+        shift
+        BASELINE_ARGS="$@"
+        
+        # Validate baseline method
+        case $METHOD in
+            obstacle_avoidance|wall_following)
+                echo "Running baseline $METHOD algorithm (hardware) with arguments: $BASELINE_ARGS"
+                if [ "$METHOD" = "obstacle_avoidance" ]; then
+                    DOCKER_CMD="python3 /root/catkin_ws/src/learning_machines/scripts/task0_controller.py --hardware --method obstacle_avoidance_task1 $BASELINE_ARGS"
+                else
+                    DOCKER_CMD="python3 /root/catkin_ws/src/learning_machines/scripts/task0_controller.py --hardware --method wall_following_algorithm $BASELINE_ARGS"
+                fi
+                ;;
+            *)
+                echo "Error: Unknown baseline method '$METHOD'"
+                echo "Available methods: obstacle_avoidance, wall_following"
                 exit 1
                 ;;
         esac

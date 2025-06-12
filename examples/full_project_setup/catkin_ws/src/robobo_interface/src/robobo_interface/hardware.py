@@ -147,11 +147,17 @@ class HardwareRobobo(IRobobo):
         if tcpros_port is None:
             tcpros_port = int(os.getenv("ROS_TCPROS_PORT", "45101"))
 
-        rospy.init_node(
-            "learning_machines_robobo_controler",
-            xmlrpc_port=xmlrpc_port,
-            tcpros_port=tcpros_port,
-        )
+        # Check if ROS node is already initialized
+        try:
+            rospy.get_node_uri()
+            self._logger("ROS node already initialized, skipping rospy.init_node()")
+        except rospy.exceptions.ROSException:
+            # ROS node not initialized, so initialize it
+            rospy.init_node(
+                "learning_machines_robobo_controler",
+                xmlrpc_port=xmlrpc_port,
+                tcpros_port=tcpros_port,
+            )
         self._logger("Starting the Learning Machines robobo controller node")
 
         # Service Proxys

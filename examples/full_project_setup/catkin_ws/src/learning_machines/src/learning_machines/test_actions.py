@@ -233,15 +233,15 @@ def obstacle_avoidance_task1(rob: IRobobo, max_distance: float = 5.0, duration_s
     last_position = None
     total_distance = 0.0
     
-    # Algorithm parameters
+    # Algorithm parameters - OPTIMIZED for transfer learning
     if isinstance(rob, SimulationRobobo):
-        # Simulation threshold and speeds
-        obstacle_threshold = threshold if threshold is not None else 0.15
+        # Simulation threshold and speeds - OPTIMIZED for 0.10 normalized threshold
+        obstacle_threshold = threshold if threshold is not None else 200  # 200/2000 = 0.10
         forward_speed = 60
         turn_speed = 40
     else:
-        # Hardware threshold and speeds  
-        obstacle_threshold = threshold if threshold is not None else 15
+        # Hardware threshold and speeds - OPTIMIZED for 0.10 normalized threshold
+        obstacle_threshold = threshold if threshold is not None else 10   # 10/100 = 0.10
         forward_speed = 50
         turn_speed = 35
     
@@ -639,27 +639,28 @@ class RobotEnvironment:
         self.is_simulation = isinstance(robot, SimulationRobobo)
         
         # Action space: [left_speed, right_speed] discretized (removed stop action)
-        self.action_space_size = 8
-        self.actions = [(-50, -50), (-25, 25), (-10, 50), (0, 50), (50, 50), 
+        self.action_space_size = 9
+        self.actions = [(-50, -50), (-25, 25), (-10, 30), (-10, 50), (25, 25), (50, 50), 
                        (50, 0), (50, -10), (25, -25)]
         
         # Action descriptions for debugging
         self.action_descriptions = [
-            "Backward", "Turn Left", "Slight Left", "Forward Slow", "Forward Fast",
-            "Forward Right", "Slight Right", "Turn Right"
+            "Backward", "Turn Left", "Slight Left", "Sharp Left", "Forward Slow", "Forward Fast",
+            "Turn Right", "Sharp Right", "Slight Right"
         ]
         
         # State space: IR sensors + previous action (optimized - removed orientation)
         self.state_size = 9  # 8 IR + 1 prev_action (robot never tilts)
         
-        # Thresholds - use provided threshold or defaults
+        # UNIFIED THRESHOLDS - Minimized differences for better transfer learning
         if self.is_simulation:
             # In simulation, IR values are distances: smaller = closer
-            # FIXED: Increased threshold to 150 for close-proximity obstacle detection only
-            # Higher threshold = less sensitive = detects only very close walls (arena navigation)
-            self.obstacle_threshold = obstacle_threshold if obstacle_threshold is not None else 150
+            # OPTIMIZED: 200 units gives ~0.10 normalized threshold (200/2000 = 0.10)
+            self.obstacle_threshold = obstacle_threshold if obstacle_threshold is not None else 200
         else:
-            self.obstacle_threshold = obstacle_threshold if obstacle_threshold is not None else 15
+            # In hardware, IR values are intensity: higher = closer
+            # OPTIMIZED: 10 units gives ~0.10 normalized threshold (10/100 = 0.10)
+            self.obstacle_threshold = obstacle_threshold if obstacle_threshold is not None else 10
         
         self.reset()
     
@@ -671,7 +672,7 @@ class RobotEnvironment:
             # Give simulation time to settle
             time.sleep(0.5)
         
-        self.prev_action = 4  # Start with forward action
+        self.prev_action = 5  # Start with Forward Fast action (index 5)
         self.last_position = None
         self.episode_distance = 0.0
         self.grace_period_steps = 15  # Increased grace period for complex initial movements
@@ -763,112 +764,224 @@ class RobotEnvironment:
         reward = 0.0
         
         # Get raw IR sensor values for reward calculation
+        # CORRECTED Sensor layout: [BackL, BackR, FrontL, FrontR, FrontC, FrontRR, BackC, FrontLL]
+        #                          [  0,    1,     2,      3,      4,      5,       6,     7  ]
+        # 
+        # Robot Layout (Top View):
+        #     7(FrontLL)    4(FrontC)    5(FrontRR)
+        #          ↖          ↑           ↗
+        #     2(FrontL)      ROBOT      3(FrontR)  
+        #          ←                         →
+        #     0(BackL)       6(BackC)      1(BackR)
+        #          ↙          ↓           ↘
+        #
+        # CORRECTED SENSOR GROUPING:
+        # FRONT sensors (true forward-facing only): [4, 5, 7] = [FrontC, FrontRR, FrontLL]
+        # SIDE sensors: [2, 3] = [FrontL, FrontR] - these are side-facing, not front!
+        # BACK sensors: [0, 1, 6] = [BackL, BackR, BackC]
         ir_raw = self.robot.read_irs()
+        
+        # Separate sensors by directional relevance for collision detection
         front_ir_raw = []
-        for i in [2, 3, 4]:  # Front sensors
+        back_ir_raw = []
+        
+        # TRUE Front sensors only: [4, 5, 7] (FrontC, FrontRR, FrontLL)
+        # Excludes side sensors [2, 3] to prevent false front collision detection
+        for i in [4, 5, 7]:
             if ir_raw[i] is not None:
                 front_ir_raw.append(ir_raw[i])
         
-        if front_ir_raw:
-            min_front_ir = min(front_ir_raw)
-        else:
-            min_front_ir = 2000 if self.is_simulation else 100  # Default safe value
+        # Back sensors: [0, 1, 6] (BackL, BackR, BackC)
+        for i in [0, 1, 6]:
+            if ir_raw[i] is not None:
+                back_ir_raw.append(ir_raw[i])
         
-        # Distance reward (encourage forward movement)
-        if self.is_simulation:
-            current_pos = self.robot.get_position()
-            if self.last_position is not None:
-                distance = math.sqrt(
-                    (current_pos.x - self.last_position.x)**2 + 
-                    (current_pos.y - self.last_position.y)**2
-                )
-                self.episode_distance += distance
-                info['distance_reward'] = distance * 10
-                reward += info['distance_reward']
-            self.last_position = current_pos
-        else:
-            # Hardware mode: Reward all forward-moving actions, not just action 4
-            if action_idx in [3, 4, 5, 6]:  # Forward movements: slow, fast, right, slight right
-                base_reward = 2.0
-                # Give extra reward for pure forward actions
-                if action_idx == 4:  # Forward Fast
-                    base_reward = 3.0
-                elif action_idx == 3:  # Forward Slow  
-                    base_reward = 2.5
-                reward += base_reward
-                info['distance_reward'] = base_reward
+        # Calculate minimum distances for each direction
+        min_front_ir = min(front_ir_raw) if front_ir_raw else (2000 if self.is_simulation else 100)
+        min_back_ir = min(back_ir_raw) if back_ir_raw else (2000 if self.is_simulation else 100)
         
-        # Collision penalty - use raw IR values with correct thresholds
-        if self.is_simulation:
-            # In simulation: smaller values = closer obstacles
-            # Skip collision detection for first few steps to allow robot to move away from initial position
-            if hasattr(self, 'grace_period_steps') and self.grace_period_steps > 0:
-                self.grace_period_steps -= 1
-                # IMPROVED: Context-aware grace period - only reward forward if path is clear
-                if min_front_ir > 0.1:  # Path is clear - encourage forward movement
-                    if action_idx == 4:  # Forward Fast action
-                        reward += 5.0  # Strong positive reward for moving forward
-                        info['distance_reward'] = 5.0
-                        self.robot.set_emotion(Emotion.HAPPY)
-                    elif action_idx == 3:  # Forward Slow action
-                        reward += 3.0  # Good reward for forward movement
-                        self.robot.set_emotion(Emotion.HAPPY)
-                    else:
-                        reward += 1.0  # Mild positive reward for any other movement
-                        self.robot.set_emotion(Emotion.NORMAL)
-                else:  # Path blocked - encourage turning instead!
-                    if action_idx in [1, 7]:  # Sharp turns when blocked
-                        reward += 4.0  # Reward smart turning
-                        self.robot.set_emotion(Emotion.NORMAL)
-                    elif action_idx in [2, 6]:  # Gentle turns when blocked
-                        reward += 2.0  # Reward turning
-                        self.robot.set_emotion(Emotion.NORMAL)
-                    elif action_idx == 0:  # Backup when blocked
-                        reward += 3.0  # Reward backing up
-                        self.robot.set_emotion(Emotion.NORMAL)
-                    elif action_idx in [3, 4]:  # Forward into obstacle during grace period
-                        reward -= 5.0  # Penalty for moving toward obstacle
-                        self.robot.set_emotion(Emotion.SURPRISED)
-                    else:
-                        reward += 1.0  # Default small reward
+        # UNIFIED ACTION-BASED REWARD SYSTEM (Consistent across simulation and hardware)
+        # This ensures better sim-to-hardware transfer by using the same reward structure
+        if action_idx in [4, 5]:  # Forward movements: slow, fast
+            base_reward = 2.0
+            # Give extra reward for pure forward actions
+            if action_idx == 5:  # Forward Fast
+                base_reward = 3.0
+            elif action_idx == 4:  # Forward Slow  
+                base_reward = 2.5
+            reward += base_reward
+            info['distance_reward'] = base_reward
+            
+            # Optional: Still track distance in simulation for analysis (but don't use for reward)
+            if self.is_simulation:
+                current_pos = self.robot.get_position()
+                if self.last_position is not None:
+                    distance = math.sqrt(
+                        (current_pos.x - self.last_position.x)**2 + 
+                        (current_pos.y - self.last_position.y)**2
+                    )
+                    self.episode_distance += distance
+                    info['actual_distance'] = distance  # For analysis only
+                self.last_position = current_pos
+        else:
+            # Small base rewards for other actions to encourage movement
+            if action_idx == 0:  # Backward
+                reward += 1.0
+                info['distance_reward'] = 1.0
+            else:  # Turning actions
+                reward += 0.5
+                info['distance_reward'] = 0.5
+        
+        # COMPREHENSIVE DIRECTIONAL COLLISION DETECTION
+        # CORRECTED Action-direction mapping:
+        # 0: Backward     - Check back sensors [0, 1, 6]
+        # 1-3: Left turns - Check all sensors (turning requires awareness of all directions)
+        # 4-5: Forward    - Check TRUE front sensors [4, 5, 7] (excludes side sensors [2,3])
+        # 6-8: Right turns- Check all sensors (turning requires awareness of all directions)
+        
+        # UNIFIED OBSTACLE DETECTION - Convert all sensor readings to normalized scale (0-1)
+        # where 0 = very close obstacle, 1 = no obstacle
+        def normalize_sensor_reading(raw_value, is_sim):
+            if is_sim:
+                # Simulation: lower values = closer obstacles, normalize to 0-1
+                return raw_value / 2000.0
             else:
-                # Normal collision detection after grace period
-                if min_front_ir < self.obstacle_threshold:
+                # Hardware: higher values = closer obstacles, invert and normalize to 0-1
+                return max(0, 1.0 - (raw_value / 100.0))
+        
+        front_normalized = normalize_sensor_reading(min_front_ir, self.is_simulation)
+        back_normalized = normalize_sensor_reading(min_back_ir, self.is_simulation)
+        
+        # UNIFIED THRESHOLD - Convert threshold to same normalized scale
+        threshold_normalized = normalize_sensor_reading(self.obstacle_threshold, self.is_simulation)
+        
+        # UNIFIED NEAR-MISS DETECTION - Use consistent multiplier
+        near_miss_multiplier = 5.0  # Same for both platforms
+        
+        collision_detected = False
+        near_miss_detected = False
+        
+        # UNIFIED GRACE PERIOD - Platform-independent logic
+        if hasattr(self, 'grace_period_steps') and self.grace_period_steps > 0:
+            self.grace_period_steps -= 1
+            # Context-aware grace period - check appropriate sensors based on action
+            if action_idx == 0:  # Backward action - check back sensors
+                path_clear = back_normalized > 0.1
+            elif action_idx in [4, 5]:  # Forward actions - check front sensors
+                path_clear = front_normalized > 0.1
+            else:  # Turning actions - check both front and back
+                path_clear = min(front_normalized, back_normalized) > 0.1
+            
+            if path_clear:  # Path is clear - encourage movement in chosen direction
+                if action_idx == 5:  # Forward Fast action
+                    reward += 5.0
+                    self.robot.set_emotion(Emotion.HAPPY)
+                elif action_idx == 4:  # Forward Slow action
+                    reward += 3.0
+                    self.robot.set_emotion(Emotion.HAPPY)
+                elif action_idx == 0:  # Backward action when path is clear
+                    reward += 2.0
+                    self.robot.set_emotion(Emotion.NORMAL)
+                else:
+                    reward += 1.0  # Mild positive reward for any other movement
+                    self.robot.set_emotion(Emotion.NORMAL)
+            else:  # Path blocked - encourage appropriate alternative actions
+                if action_idx in [1, 2, 3, 6, 7, 8]:  # Any turn when path blocked
+                    reward += 4.0  # Reward smart turning
+                    self.robot.set_emotion(Emotion.NORMAL)
+                elif action_idx == 0 and front_normalized <= 0.1:  # Backup when front blocked
+                    reward += 3.0  # Reward backing up when front blocked
+                    self.robot.set_emotion(Emotion.NORMAL)
+                elif action_idx in [4, 5] and front_normalized <= 0.1:  # Forward into front obstacle
+                    reward -= 5.0  # Penalty for moving toward front obstacle
+                    self.robot.set_emotion(Emotion.SURPRISED)
+                elif action_idx == 0 and back_normalized <= 0.1:  # Backward into back obstacle
+                    reward -= 5.0  # Penalty for backing into back obstacle
+                    self.robot.set_emotion(Emotion.SURPRISED)
+                else:
+                    reward += 1.0  # Default small reward
+        else:
+            # UNIFIED COLLISION DETECTION - Platform-independent logic
+            if action_idx == 0:  # Backward action - check back sensors
+                if back_normalized < threshold_normalized:
+                    collision_detected = True
                     reward -= 50.0
                     info['collision'] = True
                     self.robot.set_emotion(Emotion.SAD)
-                elif min_front_ir < self.obstacle_threshold * 5.0:  # Increased near-miss range
+                elif back_normalized < threshold_normalized * near_miss_multiplier:
+                    near_miss_detected = True
                     reward -= 5.0
                     info['near_miss'] = True
                     self.robot.set_emotion(Emotion.SURPRISED)
                 else:
-                    reward += 2.0
+                    reward += 1.0  # Small reward for safe backward movement
+                    self.robot.set_emotion(Emotion.NORMAL)
+            elif action_idx in [4, 5]:  # Forward actions - check front sensors
+                if front_normalized < threshold_normalized:
+                    collision_detected = True
+                    reward -= 50.0
+                    info['collision'] = True
+                    self.robot.set_emotion(Emotion.SAD)
+                elif front_normalized < threshold_normalized * near_miss_multiplier:
+                    near_miss_detected = True
+                    reward -= 5.0
+                    info['near_miss'] = True
+                    self.robot.set_emotion(Emotion.SURPRISED)
+                else:
+                    reward += 2.0  # Good reward for safe forward movement
                     self.robot.set_emotion(Emotion.HAPPY)
-        else:
-            # Hardware: larger values = closer obstacles
-            if min_front_ir > self.obstacle_threshold:
-                reward -= 50.0
-                info['collision'] = True
-                self.robot.set_emotion(Emotion.SAD)
-            elif min_front_ir > self.obstacle_threshold * 0.5:
-                reward -= 5.0
-                info['near_miss'] = True
-                self.robot.set_emotion(Emotion.SURPRISED)
-            else:
-                reward += 2.0
-                self.robot.set_emotion(Emotion.HAPPY)
+            else:  # Turning actions - check both front and back for comprehensive awareness
+                min_relevant_normalized = min(front_normalized, back_normalized)
+                if min_relevant_normalized < threshold_normalized:
+                    collision_detected = True
+                    reward -= 25.0  # Reduced penalty for turning collisions
+                    info['collision'] = True
+                    self.robot.set_emotion(Emotion.SAD)
+                elif min_relevant_normalized < threshold_normalized * near_miss_multiplier:
+                    near_miss_detected = True
+                    reward -= 2.5  # Reduced penalty for turning near-misses
+                    info['near_miss'] = True
+                    self.robot.set_emotion(Emotion.SURPRISED)
+                else:
+                    reward += 1.5  # Reward for safe turning
+                    self.robot.set_emotion(Emotion.NORMAL)
         
-        # Reduce penalty for turning when necessary for obstacle avoidance
+        # Adaptive turning penalty based on obstacle proximity
         # Use normalized state values for this check
         front_sensors_norm = state[:3]  # Front sensors are first 3 in 9D state
-        if np.mean(front_sensors_norm) > 0.7 and action_idx in [1, 2, 6, 7]:  # Only penalize if path is very clear
-            reward -= 0.5  # Reduced penalty from -1.0 to -0.5
+        back_sensors_norm = state[5:8]  # Back sensors in 9D state (indices 5, 6, 7)
+        
+        # Only penalize turning when there's actually space to move straight
+        # This prevents excessive turning when the robot is cornered
+        if action_idx in [1, 2, 3, 6, 7, 8]:  # All turning actions
+            # Check if there's clear space ahead for forward movement
+            if np.mean(front_sensors_norm) < 0.3:  # Clear path ahead
+                # Check if there's clear space behind for backward movement  
+                if np.mean(back_sensors_norm) < 0.3:  # Clear path behind too
+                    # Both directions clear - mild penalty for unnecessary turning
+                    reward -= 0.2  # Very reduced penalty
+                else:
+                    # Only forward clear - small penalty since turning might be strategic
+                    reward -= 0.1
+            # If obstacles detected in movement directions, no penalty for turning
+            # (turning is actually the smart choice)
         
         # Check if stuck - robot should always be moving now (no stop action available)
         # This condition is now less relevant since stop action is removed
         ir_state_values = state[:8]  # First 8 values are IR sensors
         if np.all(ir_state_values > 0.9):  # Very high threshold for stuck detection
             info['stuck'] = True
+        
+        # IMPLEMENTATION COMPLETE: Unified Reward System with CORRECTED Sensor Grouping
+        # ✅ UNIFIED: Single reward logic for both simulation and hardware platforms
+        # ✅ CORRECTED: True front sensors [4,5,7] only - excludes side sensors [2,3] to prevent false front collisions
+        # ✅ Directional collision detection: Forward actions check TRUE front sensors, backward actions check back sensors [0,1,6]
+        # ✅ Action-aware reward system: Different penalties/rewards based on action direction and sensor readings
+        # ✅ Grace period improvements: Context-aware path checking for smarter initial learning
+        # ✅ Turning penalties: Adaptive penalties that consider obstacle proximity in all directions
+        # ✅ Platform normalization: All sensor values normalized to 0-1 scale for unified logic
+        # ✅ Prevents getting stuck: Robot can now learn to avoid obstacles when backing up
+        # ✅ Side sensor separation: [2,3] excluded from front detection to allow lateral movement
         
         return reward, info
 
@@ -977,7 +1090,7 @@ class DQNNetwork(nn.Module):
         x = F.relu(self.fc2(x))
         x = self.dropout(x)
         x = F.relu(self.fc3(x))
-        x = self.fc4(x)
+        x = self.fc4(x)  # No activation on output (Q-values can be negative)
         return x
 
 

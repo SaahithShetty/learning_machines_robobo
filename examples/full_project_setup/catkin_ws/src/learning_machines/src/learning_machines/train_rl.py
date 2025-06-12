@@ -206,6 +206,10 @@ def main():
             'max_steps_per_episode': args.max_steps
         }
         
+        # Add model path for evaluation mode
+        if args.load_model is not None:
+            rl_kwargs['model_path'] = args.load_model
+        
         # Add threshold arguments if provided
         if args.obstacle_threshold is not None:
             rl_kwargs['obstacle_threshold'] = args.obstacle_threshold
