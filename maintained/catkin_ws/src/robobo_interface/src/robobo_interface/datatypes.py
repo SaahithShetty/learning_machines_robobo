@@ -13,7 +13,7 @@ class Emotion(Enum):
     """
 
     HAPPY = "happy"
-    LAUCHING = "laughing"
+    LAUGHING = "laughing"  # Fixed typo: was "LAUCHING"
     SAD = "sad"
     ANGRY = "angry"
     SURPRISED = "surprised"

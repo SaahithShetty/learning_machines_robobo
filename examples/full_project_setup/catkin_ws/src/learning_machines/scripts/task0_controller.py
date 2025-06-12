@@ -2,8 +2,8 @@
 import sys
 import argparse
 
-from robobo_interface import SimulationRobobo, HardwareRobobo
-from learning_machines import obstacle_avoidance, walk_until_obstacle
+from learning_machines.test_actions import SimulationRobobo, HardwareRobobo
+from learning_machines import obstacle_avoidance_task1, wall_following_algorithm
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Task 0: Obstacle Avoidance')
@@ -12,8 +12,8 @@ if __name__ == "__main__":
     parser.add_argument('--iterations', type=int, default=100, help='Number of control iterations')
     parser.add_argument('--duration', type=int, default=60, help='Duration in seconds for walk_until_obstacle')
     parser.add_argument('--no-save', action='store_true', help='Don\'t save data')
-    parser.add_argument('--method', choices=['obstacle_avoidance', 'walk_until_obstacle'], 
-                        default='walk_until_obstacle', 
+    parser.add_argument('--method', choices=['obstacle_avoidance_task1', 'wall_following_algorithm'], 
+                        default='obstacle_avoidance_task1', 
                         help='Choose which method to run')
     
     args = parser.parse_args()
@@ -30,16 +30,16 @@ if __name__ == "__main__":
         rob = SimulationRobobo()
     
     # Run the selected method
-    if args.method == 'obstacle_avoidance':
-        print("Using obstacle_avoidance method")
-        data = obstacle_avoidance(
+    if args.method == 'obstacle_avoidance_task1':
+        print("Using obstacle_avoidance_task1 method")
+        data = obstacle_avoidance_task1(
             rob, 
-            iterations=args.iterations, 
+            duration_seconds=args.duration, 
             save_data=not args.no_save
         )
     else:
-        print("Using walk_until_obstacle method")
-        walk_until_obstacle(
+        print("Using wall_following_algorithm method")
+        wall_following_algorithm(
             rob,
             duration_seconds=args.duration
         )

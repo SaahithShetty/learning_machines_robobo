@@ -2,7 +2,7 @@
 import argparse
 import time
 
-from robobo_interface import HardwareRobobo, SimulationRobobo
+from learning_machines.test_actions import HardwareRobobo, SimulationRobobo
 
 def monitor_ir_sensors(rob, duration=30, interval=0.5):
     """

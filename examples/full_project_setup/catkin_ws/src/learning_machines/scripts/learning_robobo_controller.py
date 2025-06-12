@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import sys
 
-from robobo_interface import SimulationRobobo, HardwareRobobo
+from learning_machines.test_actions import SimulationRobobo, HardwareRobobo
 from learning_machines import run_all_actions
 
 
