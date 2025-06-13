@@ -195,7 +195,7 @@ fi
 
 # Run the container with obstacle environment
 echo "Starting Docker container..."
-docker run -t --rm --platform linux/amd64 \
+docker run -it --rm --platform linux/amd64 \
     -p 45100:45100 -p 45101:45101 \
     -v "$(pwd)/results:/root/results" \
     -e SCENE_FILE="arena_obstacles.ttt" \

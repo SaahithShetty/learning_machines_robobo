@@ -1,0 +1,109 @@
+{
+  "scene_name": "arena_calibration.ttt",
+  "description": "Calibration arena for IR sensor distance measurements",
+  "objects": [
+    {
+      "name": "Floor",
+      "type": "Plane",
+      "position": [0, 0, 0],
+      "size": [5.0, 5.0, 0.1],
+      "color": [0.8, 0.8, 0.8],
+      "material": "non_reflective"
+    },
+    {
+      "name": "CalibrationWall", 
+      "type": "Cuboid",
+      "position": [2.0, 0, 0.5],
+      "size": [0.1, 3.0, 1.0],
+      "color": [0.9, 0.9, 0.9],
+      "material": "matte_white"
+    },
+    {
+      "name": "Marker_5cm",
+      "type": "Cylinder",
+      "position": [1.85, 0, 0.05],
+      "size": [0.02, 0.02, 0.1],
+      "color": [1.0, 0.0, 0.0],
+      "label": "5cm"
+    },
+    {
+      "name": "Marker_10cm",
+      "type": "Cylinder", 
+      "position": [1.80, 0, 0.05],
+      "size": [0.02, 0.02, 0.1],
+      "color": [0.0, 1.0, 0.0],
+      "label": "10cm"
+    },
+    {
+      "name": "Marker_15cm",
+      "type": "Cylinder",
+      "position": [1.75, 0, 0.05], 
+      "size": [0.02, 0.02, 0.1],
+      "color": [0.0, 0.0, 1.0],
+      "label": "15cm"
+    },
+    {
+      "name": "Marker_20cm",
+      "type": "Cylinder",
+      "position": [1.70, 0, 0.05],
+      "size": [0.02, 0.02, 0.1], 
+      "color": [1.0, 1.0, 0.0],
+      "label": "20cm"
+    },
+    {
+      "name": "Marker_25cm",
+      "type": "Cylinder",
+      "position": [1.65, 0, 0.05],
+      "size": [0.02, 0.02, 0.1],
+      "color": [1.0, 0.0, 1.0], 
+      "label": "25cm"
+    },
+    {
+      "name": "Marker_30cm",
+      "type": "Cylinder",
+      "position": [1.60, 0, 0.05],
+      "size": [0.02, 0.02, 0.1],
+      "color": [1.0, 0.5, 0.0],
+      "label": "30cm"
+    },
+    {
+      "name": "RoboboStartPosition",
+      "type": "Reference",
+      "position": [1.20, 0, 0.05],
+      "orientation": [0, 0, 0],
+      "notes": "Initial robot placement, 40cm from wall"
+    }
+  ],
+  "lighting": {
+    "ambient": 0.6,
+    "directional": {
+      "intensity": 0.4,
+      "direction": [0, 0, -1],
+      "shadows": false
+    }
+  },
+  "physics": {
+    "enabled": true,
+    "gravity": [0, 0, -9.81],
+    "timestep": 0.005
+  },
+  "camera_positions": [
+    {
+      "name": "OverviewCamera",
+      "position": [0, -3, 2],
+      "target": [1.5, 0, 0]
+    },
+    {
+      "name": "SideCamera", 
+      "position": [3, 1, 1],
+      "target": [1.5, 0, 0]
+    }
+  ],
+  "usage_instructions": [
+    "1. Load the Robobo robot model at the start position",
+    "2. Ensure robot faces the calibration wall (X+ direction)",
+    "3. Use distance markers for precise positioning during calibration",
+    "4. Run calibration script and manually position robot at each marker",
+    "5. Verify IR sensor readings are non-zero and decrease with distance"
+  ]
+}

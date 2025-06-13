@@ -886,12 +886,44 @@ class RobotEnvironment:
                     reward += 1.0  # Mild positive reward for any other movement
                     self.robot.set_emotion(Emotion.NORMAL)
             else:  # Path blocked - encourage appropriate alternative actions
+                # Even during grace period, check for actual collisions in the turn direction
                 if action_idx in [1, 2, 3, 6, 7, 8]:  # Any turn when path blocked
-                    reward += 4.0  # Reward smart turning
-                    self.robot.set_emotion(Emotion.NORMAL)
+                    # Check if the turn is safe (not causing collision)
+                    min_relevant_normalized = min(front_normalized, back_normalized)
+                    if min_relevant_normalized < threshold_normalized:
+                        # Collision during turn - penalize even in grace period
+                        collision_detected = True
+                        reward -= 25.0  
+                        info['collision'] = True
+                        self.robot.set_emotion(Emotion.SAD)
+                    elif min_relevant_normalized < threshold_normalized * near_miss_multiplier:
+                        # Near miss during turn - light penalty even in grace period
+                        near_miss_detected = True
+                        reward -= 2.5
+                        info['near_miss'] = True
+                        self.robot.set_emotion(Emotion.SURPRISED)
+                    else:
+                        # Safe turn when path blocked - reward
+                        reward += 4.0  
+                        self.robot.set_emotion(Emotion.NORMAL)
                 elif action_idx == 0 and front_normalized <= 0.1:  # Backup when front blocked
-                    reward += 3.0  # Reward backing up when front blocked
-                    self.robot.set_emotion(Emotion.NORMAL)
+                    # Check if backup is safe
+                    if back_normalized < threshold_normalized:
+                        # Backing into collision - penalize
+                        collision_detected = True
+                        reward -= 25.0
+                        info['collision'] = True
+                        self.robot.set_emotion(Emotion.SAD)
+                    elif back_normalized < threshold_normalized * near_miss_multiplier:
+                        # Near miss while backing up
+                        near_miss_detected = True
+                        reward -= 2.5
+                        info['near_miss'] = True
+                        self.robot.set_emotion(Emotion.SURPRISED)
+                    else:
+                        # Safe backup when front blocked - reward
+                        reward += 3.0  
+                        self.robot.set_emotion(Emotion.NORMAL)
                 elif action_idx in [4, 5] and front_normalized <= 0.1:  # Forward into front obstacle
                     reward -= 5.0  # Penalty for moving toward front obstacle
                     self.robot.set_emotion(Emotion.SURPRISED)
@@ -1276,7 +1308,7 @@ class PolicyGradientAgent:
         self.training_losses = []
         
         # Exploration parameters
-        self.exploration_episodes = 50  # Number of episodes to maintain exploration
+        self.exploration_episodes = 20  # Reduced for faster collision avoidance learning
         self.current_episode = 0
         self.min_entropy = 0.1  # Minimum entropy to maintain
     
@@ -1291,8 +1323,8 @@ class PolicyGradientAgent:
             
             # Add exploration during early training episodes
             if training and self.current_episode < self.exploration_episodes:
-                # Add small amount of uniform noise for exploration
-                epsilon = max(0.1, 0.5 - (self.current_episode / self.exploration_episodes) * 0.4)
+                # Reduced exploration for faster collision learning
+                epsilon = max(0.05, 0.3 - (self.current_episode / self.exploration_episodes) * 0.25)
                 uniform_probs = torch.ones_like(action_probs) / action_probs.size(1)
                 action_probs = (1 - epsilon) * action_probs + epsilon * uniform_probs
             
@@ -1304,6 +1336,34 @@ class PolicyGradientAgent:
             if torch.isnan(action_probs).any():
                 print("Warning: NaN detected in action probabilities, using uniform distribution")
                 action_probs = torch.ones_like(action_probs) / action_probs.size(1)
+            
+            # Context-aware action filtering during training to prevent obviously bad actions
+            if training and self.current_episode < 30:  # Apply filtering during early learning
+                # Get sensor values 
+                front_sensors = state[:3]  # Front sensors
+                back_sensors = state[5:8]  # Back sensors
+                min_front_distance = np.min(front_sensors)
+                min_back_distance = np.min(back_sensors)
+                
+                # If front sensors detect close obstacles, reduce probability of forward actions
+                if min_front_distance < 0.2:  # Normalized threshold for close obstacles
+                    action_probs[0][4] *= 0.2  # Forward Slow - reduced but not eliminated
+                    action_probs[0][5] *= 0.1  # Forward Fast - more severely reduced
+                
+                # If robot is very close to front obstacle, encourage escape actions
+                if min_front_distance < 0.15:  # Very close to front obstacle
+                    # Moderately boost backward and turning actions
+                    action_probs[0][0] *= 2.5  # Backward action - moderate boost
+                    # Boost turning actions to help escape
+                    for turn_action in [1, 2, 3, 6, 7, 8]:
+                        action_probs[0][turn_action] *= 1.5  # Encourage turning when trapped
+                
+                # If back is also blocked, don't over-boost backward
+                if min_back_distance < 0.2:
+                    action_probs[0][0] *= 0.5  # Reduce backward if back is also blocked
+                
+                # Renormalize
+                action_probs = action_probs / action_probs.sum(dim=1, keepdim=True)
         
         if training:
             # Sample from probability distribution

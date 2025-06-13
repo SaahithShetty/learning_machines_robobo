@@ -1,0 +1,163 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no" ?>
+<!-- 
+Calibration Arena Scene for Robobo IR Sensor Testing
+====================================================
+
+This XML scene file defines a calibration environment with:
+- Clean floor plane
+- Calibration wall for distance measurements  
+- Colored distance markers at 5cm intervals
+- Robot starting position
+- Proper lighting
+
+To use:
+1. Save this file as 'arena_calibration.xml'
+2. Open CoppeliaSim
+3. File → Import → Model/Scene → Select this XML file
+4. Add Robobo robot model to scene
+5. Position robot at start position facing the wall
+-->
+
+<CoppeliaSim>
+    <environment>
+        <physicsEngine>bullet</physicsEngine>
+        <gravity x="0" y="0" z="-9.81"/>
+        <timeStep>0.005</timeStep>
+        <realTimeCoefficient>1.0</realTimeCoefficient>
+    </environment>
+
+    <!-- Scene objects -->
+    <objects>
+        
+        <!-- Floor plane -->
+        <shape name="CalibrationFloor" type="plane">
+            <position x="0" y="0" z="0"/>
+            <orientation alpha="0" beta="0" gamma="0"/>
+            <size x="5.0" y="5.0" z="0.1"/>
+            <color r="0.8" g="0.8" b="0.8"/>
+            <material type="non_reflective"/>
+            <mass value="0"/>
+            <respondable enabled="true"/>
+        </shape>
+
+        <!-- Main calibration wall -->
+        <shape name="CalibrationWall" type="cuboid">
+            <position x="2.0" y="0" z="0.5"/>
+            <orientation alpha="0" beta="0" gamma="0"/>
+            <size x="0.1" y="3.0" z="1.0"/>
+            <color r="0.9" g="0.9" b="0.9"/>
+            <material type="matte"/>
+            <mass value="0"/>
+            <respondable enabled="true"/>
+        </shape>
+
+        <!-- Distance Markers -->
+        
+        <!-- 5cm marker (Red) -->
+        <shape name="Marker_5cm" type="cylinder">
+            <position x="1.85" y="0" z="0.05"/>
+            <orientation alpha="0" beta="0" gamma="0"/>
+            <size x="0.02" y="0.02" z="0.1"/>
+            <color r="1.0" g="0.0" b="0.0"/>
+            <mass value="0"/>
+            <respondable enabled="false"/>
+        </shape>
+
+        <!-- 10cm marker (Green) -->
+        <shape name="Marker_10cm" type="cylinder">
+            <position x="1.80" y="0" z="0.05"/>
+            <orientation alpha="0" beta="0" gamma="0"/>
+            <size x="0.02" y="0.02" z="0.1"/>
+            <color r="0.0" g="1.0" b="0.0"/>
+            <mass value="0"/>
+            <respondable enabled="false"/>
+        </shape>
+
+        <!-- 15cm marker (Blue) -->
+        <shape name="Marker_15cm" type="cylinder">
+            <position x="1.75" y="0" z="0.05"/>
+            <orientation alpha="0" beta="0" gamma="0"/>
+            <size x="0.02" y="0.02" z="0.1"/>
+            <color r="0.0" g="0.0" b="1.0"/>
+            <mass value="0"/>
+            <respondable enabled="false"/>
+        </shape>
+
+        <!-- 20cm marker (Yellow) -->
+        <shape name="Marker_20cm" type="cylinder">
+            <position x="1.70" y="0" z="0.05"/>
+            <orientation alpha="0" beta="0" gamma="0"/>
+            <size x="0.02" y="0.02" z="0.1"/>
+            <color r="1.0" g="1.0" b="0.0"/>
+            <mass value="0"/>
+            <respondable enabled="false"/>
+        </shape>
+
+        <!-- 25cm marker (Magenta) -->
+        <shape name="Marker_25cm" type="cylinder">
+            <position x="1.65" y="0" z="0.05"/>
+            <orientation alpha="0" beta="0" gamma="0"/>
+            <size x="0.02" y="0.02" z="0.1"/>
+            <color r="1.0" g="0.0" b="1.0"/>
+            <mass value="0"/>
+            <respondable enabled="false"/>
+        </shape>
+
+        <!-- 30cm marker (Orange) -->
+        <shape name="Marker_30cm" type="cylinder">
+            <position x="1.60" y="0" z="0.05"/>
+            <orientation alpha="0" beta="0" gamma="0"/>
+            <size x="0.02" y="0.02" z="0.1"/>
+            <color r="1.0" g="0.5" b="0.0"/>
+            <mass value="0"/>
+            <respondable enabled="false"/>
+        </shape>
+
+        <!-- Robot start position marker -->
+        <shape name="RoboboStartPosition" type="sphere">
+            <position x="1.20" y="0" z="0.025"/>
+            <orientation alpha="0" beta="0" gamma="0"/>
+            <size x="0.05" y="0.05" z="0.05"/>
+            <color r="0.5" g="0.5" b="0.5"/>
+            <mass value="0"/>
+            <respondable enabled="false"/>
+        </shape>
+
+        <!-- Light source -->
+        <light name="CalibrationLight" type="directional">
+            <position x="1.5" y="0" z="3.0"/>
+            <direction x="0" y="0" z="-1"/>
+            <intensity>0.8</intensity>
+            <color r="1.0" g="1.0" b="1.0"/>
+            <shadows enabled="false"/>
+        </light>
+
+    </objects>
+
+    <!-- Camera views for calibration -->
+    <cameras>
+        
+        <!-- Overview camera -->
+        <camera name="OverviewCamera">
+            <position x="0" y="-3" z="2"/>
+            <target x="1.5" y="0" z="0"/>
+            <fov>60</fov>
+        </camera>
+
+        <!-- Side view camera -->
+        <camera name="SideCamera">
+            <position x="3" y="1" z="1"/>
+            <target x="1.5" y="0" z="0"/>
+            <fov>60</fov>
+        </camera>
+
+    </cameras>
+
+    <!-- Scene configuration -->
+    <settings>
+        <ambient_light intensity="0.6"/>
+        <background_color r="0.1" g="0.1" b="0.15"/>
+        <simulation_timestep>0.005</simulation_timestep>
+    </settings>
+
+</CoppeliaSim>
