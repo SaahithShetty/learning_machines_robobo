@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 """
-Unified RL Training Script for Task 1 - Obstacle Avoidance
+Unified RL Training Script for Task 2 - Green Food Collection
 
 This script trains any RL agent (Q-Learning, DQN, Policy Gradient, Actor-Critic) 
-for obstacle avoidance using a unified interface.
+for green food collection using computer vision and reinforcement learning.
 
 Usage:
-    python train_rl.py --method policy_gradient --episodes 300 --learning-rate 0.0005
-    python train_rl.py --method dqn --episodes 500 --batch-size 64
-    python train_rl.py --method qlearning --episodes 1000 --epsilon-decay 0.995
-    python train_rl.py --method actor_critic --episodes 400 --value-loss-coef 0.5
+    python train_rl.py --method dqn --episodes 100 --max-steps 1800
+    python train_rl.py --method qlearning --episodes 200 --max-steps 1800  
+    python train_rl.py --method policy_gradient --episodes 150 --max-steps 1800
+    python train_rl.py --method actor_critic --episodes 100 --max-steps 1800
+    python train_rl.py --method dqn --mode evaluate --load-model model.pth --episodes 10
 """
 
 import argparse
@@ -30,21 +31,22 @@ sys.path.append('/root/catkin_ws/src/learning_machines/src')
 from learning_machines.test_actions import (
     SimulationRobobo, 
     HardwareRobobo,
-    rl_obstacle_avoidance_task1
+    green_food_collection_task2
 )
 from data_files import FIGURES_DIR
 
 def parse_arguments():
     """Parse command line arguments"""
     parser = argparse.ArgumentParser(
-        description='Train RL agent for obstacle avoidance',
+        description='Train RL agent for green food collection',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  %(prog)s --method policy_gradient --episodes 300
-  %(prog)s --method dqn --episodes 500 --learning-rate 0.001
-  %(prog)s --method qlearning --episodes 1000 --epsilon-decay 0.995
-  %(prog)s --method actor_critic --episodes 400 --gamma 0.99
+  %(prog)s --method dqn --episodes 100 --max-steps 1800
+  %(prog)s --method qlearning --episodes 200 --max-steps 1800
+  %(prog)s --method policy_gradient --episodes 150 --max-steps 1800
+  %(prog)s --method actor_critic --episodes 100 --max-steps 1800
+  %(prog)s --method dqn --mode evaluate --load-model model.pth --episodes 10
         """
     )
     
@@ -61,13 +63,19 @@ Examples:
                                help='Use hardware robot')
     
     # Training parameters
-    parser.add_argument('--episodes', type=int, default=200, 
-                       help='Number of training episodes (default: 200)')
-    parser.add_argument('--max-steps', type=int, default=500,
-                       help='Maximum steps per episode (default: 500)')
+    parser.add_argument('--episodes', type=int, default=100, 
+                       help='Number of training episodes (default: 100)')
+    parser.add_argument('--max-steps', type=int, default=1800,
+                       help='Maximum steps per episode - 3 minutes at 10Hz (default: 1800)')
     parser.add_argument('--mode', type=str, default='train',
                        choices=['train', 'evaluate', 'train_and_evaluate'],
                        help='Training mode (default: train)')
+    
+    # Model loading/saving
+    parser.add_argument('--load-model', type=str, default=None,
+                       help='Path to pre-trained model file (for evaluation or continued training)')
+    parser.add_argument('--save-model', type=str, default=None,
+                       help='Path to save trained model (default: auto-generated)')
     
     # Common RL parameters
     parser.add_argument('--learning-rate', type=float, default=0.001,
@@ -98,12 +106,6 @@ Examples:
     # Model management
     parser.add_argument('--save-freq', type=int, default=50,
                        help='Save model every N episodes (default: 50)')
-    parser.add_argument('--load-model', type=str, default=None,
-                       help='Path to load pre-trained model')
-    
-    # Environment thresholds
-    parser.add_argument('--obstacle-threshold', type=float, default=None,
-                       help='Obstacle detection threshold (simulation: 150, hardware: 20)')
     
     return parser.parse_args()
 
@@ -195,26 +197,21 @@ def main():
         print("Connected successfully!")
         
         # Start training
-        print(f"\nStarting {args.method.upper()} training...")
+        print(f"\nStarting {args.method.upper()} training for green food collection...")
         
-        # Prepare training arguments
+        # Prepare training arguments for Task 2
         rl_kwargs = {
             'rob': rob,
             'agent_type': args.method,
             'mode': args.mode,
-            'num_episodes': args.episodes,
-            'max_steps_per_episode': args.max_steps
+            'num_episodes': args.episodes
         }
         
         # Add model path for evaluation mode
         if args.load_model is not None:
             rl_kwargs['model_path'] = args.load_model
         
-        # Add threshold arguments if provided
-        if args.obstacle_threshold is not None:
-            rl_kwargs['obstacle_threshold'] = args.obstacle_threshold
-        
-        results = rl_obstacle_avoidance_task1(**rl_kwargs)
+        results = green_food_collection_task2(**rl_kwargs)
         
         print("\n" + "=" * 80)
         print("TRAINING COMPLETED SUCCESSFULLY!")
@@ -249,8 +246,8 @@ def main():
             rospy.signal_shutdown("Training completed")
 
 def print_training_summary(metrics, method):
-    """Print training statistics summary"""
-    print(f"\nTraining Summary ({method.upper()}):")
+    """Print training statistics summary for food collection"""
+    print(f"\nTraining Summary ({method.upper()}) - Green Food Collection:")
     print(f"  Total episodes: {len(metrics['episode_rewards'])}")
     
     if metrics['episode_rewards']:
@@ -259,21 +256,32 @@ def print_training_summary(metrics, method):
         print(f"  Best episode reward: {max(metrics['episode_rewards']):.2f}")
         print(f"  Worst episode reward: {min(metrics['episode_rewards']):.2f}")
     
-    if metrics['episode_lengths']:
-        avg_length = sum(metrics['episode_lengths']) / len(metrics['episode_lengths'])
-        print(f"  Average episode length: {avg_length:.1f}")
+    # Task 2 specific metrics
+    if 'episode_food_collected' in metrics:
+        avg_food = sum(metrics['episode_food_collected']) / len(metrics['episode_food_collected'])
+        print(f"  Average foods collected per episode: {avg_food:.1f}/7")
+        
+    if 'success_rate' in metrics:
+        success_rate = metrics['success_rate'][-1] if metrics['success_rate'] else 0
+        print(f"  Success rate (7 foods collected): {success_rate:.1%}")
     
-    if metrics['collision_rates']:
-        avg_collision_rate = sum(metrics['collision_rates']) / len(metrics['collision_rates'])
-        print(f"  Average collision rate: {avg_collision_rate:.3f}")
+    if 'episode_times' in metrics:
+        avg_time = sum(metrics['episode_times']) / len(metrics['episode_times'])
+        print(f"  Average completion time: {avg_time:.1f} seconds")
 
 def print_evaluation_summary(eval_metrics, method):
-    """Print evaluation statistics summary"""
-    print(f"\nEvaluation Summary ({method.upper()}):")
+    """Print evaluation statistics summary for food collection"""
+    print(f"\nEvaluation Summary ({method.upper()}) - Green Food Collection:")
     print(f"  Average reward: {eval_metrics['average_reward']:.2f}")
-    print(f"  Success rate (no collisions): {eval_metrics['success_rate']:.2%}")
-    print(f"  Average episode length: {eval_metrics['average_length']:.2f}")
-    print(f"  Average collisions per episode: {sum(eval_metrics['collision_counts']) / len(eval_metrics['collision_counts']):.2f}")
+    
+    if 'success_rate' in eval_metrics:
+        print(f"  Success rate (7 foods collected): {eval_metrics['success_rate']:.1%}")
+    if 'average_foods_collected' in eval_metrics:
+        print(f"  Average foods collected: {eval_metrics['average_foods_collected']:.1f}/7")
+    if 'average_completion_time' in eval_metrics:
+        print(f"  Average completion time: {eval_metrics['average_completion_time']:.1f}s")
+    if 'collision_rate' in eval_metrics:
+        print(f"  Collision rate: {eval_metrics['collision_rate']:.1%}")
 
 def print_saved_files(method):
     """Print information about saved files"""

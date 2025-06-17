@@ -1,3 +1,25 @@
+"""
+Task 2: Green Food Collection - Reinforcement Learning Implementation
+====================================================================
+
+This module implements Task 2 for the Robobo robot using reinforcement learning
+and computer vision. The robot must collect 7 green food boxes within 3 minutes
+using DQN (Deep Q-Network) for intelligent navigation and OpenCV for food detection.
+
+Key Components:
+- RobotEnvironment: RL environment wrapper optimized for food collection
+- DQNAgent: Deep Q-Network agent for action selection and learning
+- FoodVisionProcessor: Computer vision system for green food detection
+- Comprehensive reward system balancing collection, exploration, and safety
+
+State Space (13D): [8 IR sensors + 3 vision features + 2 orientation]
+Action Space (9D): Stop, backward, turns (left/right), forward movements
+Sensor Order: [BackL, BackR, FrontL, FrontR, FrontC, FrontRR, BackC, FrontLL]
+
+Author: Learning Machines Team
+Focus: Task 2 (Green Food Collection) - Obstacle Avoidance (Task 1) removed
+"""
+
 import cv2
 import time
 import math
@@ -5,10 +27,6 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from pathlib import Path
 import numpy as np
-import torch
-import torch.nn as nn
-import torch.optim as optim
-import torch.nn.functional as F
 import random
 import pickle
 import json
@@ -35,7 +53,14 @@ from robobo_interface import (
 
 from typing import Optional
 
-# RL Models Experience
+# Import RL agents from separate modules
+try:
+    from .agent_factory import create_rl_agent, get_agent_info, get_default_hyperparameters
+except ImportError:
+    # Fallback for when modules are in same directory
+    from agent_factory import create_rl_agent, get_agent_info, get_default_hyperparameters
+
+# Experience tuple for environment
 Experience = namedtuple('Experience', ['state', 'action', 'reward', 'next_state', 'done'])
 
 
@@ -138,556 +163,129 @@ def test_hardware(rob: HardwareRobobo):
     print("Robot battery level: ", rob.robot_battery())
 
 
-def run_all_actions(rob: IRobobo, use_rl: bool = False, rl_agent_type: str = 'qlearning', 
-                   rl_mode: str = 'train', rl_episodes: int = 100):
-    """Main function to run Task 1 - Advanced Obstacle Avoidance
+def run_green_food_collection(rob: IRobobo, rl_agent_type: str = 'dqn', 
+                             rl_mode: str = 'train', rl_episodes: int = 100):
+    """Main function to run Task 2: Green Food Collection
+    
+    This is the primary entry point for running the green food collection task
+    using reinforcement learning and computer vision.
     
     Args:
-        rob: Robot interface instance
-        use_rl: Whether to use RL-based approach instead of rule-based
-        rl_agent_type: Type of RL agent ('qlearning', 'dqn', 'policy_gradient', 'actor_critic')
+        rob: Robot interface instance (SimulationRobobo or HardwareRobobo)
+        rl_agent_type: Type of RL agent ('dqn' for Task 2)
         rl_mode: RL mode ('train', 'evaluate', or 'train_and_evaluate')
-        rl_episodes: Number of RL episodes
+        rl_episodes: Number of RL episodes to run
+        
+    Returns:
+        Dictionary with training results and performance metrics
     """
     if isinstance(rob, SimulationRobobo):
         rob.play_simulation()
     
     print("="*50)
-    if use_rl:
-        print(f"TASK 1: RL-BASED OBSTACLE AVOIDANCE ({rl_agent_type.upper()})")
-        print("="*50)
-        
-        # Run RL-based obstacle avoidance
-        results = rl_obstacle_avoidance_task1(
-            rob, agent_type=rl_agent_type, mode=rl_mode, num_episodes=rl_episodes
-        )
-        
-        print(f"\nRL Training/Evaluation completed!")
-        if rl_mode in ['train', 'train_and_evaluate']:
-            print(f"Models and metrics saved to {FIGURES_DIR}")
-        
-        return results
-    else:
-        print("TASK 1: RULE-BASED OBSTACLE AVOIDANCE")
-        print("="*50)
-        
-        # Run the original rule-based obstacle avoidance algorithm
-        obstacle_avoidance_task1(rob, max_distance=10.0, duration_seconds=120, save_data=True)
+    print(f"TASK 2: GREEN FOOD COLLECTION USING OPENCV + RL ({rl_agent_type.upper()})")
+    print("="*50)
+    
+    # Run Task 2 - Green Food Collection
+    results = green_food_collection_task2(
+        rob, agent_type=rl_agent_type, mode=rl_mode, num_episodes=rl_episodes
+    )
+    
+    print(f"\nTask 2 completed!")
+    if rl_mode in ['train', 'train_and_evaluate']:
+        print(f"Models and metrics saved to {FIGURES_DIR}")
     
     if isinstance(rob, SimulationRobobo):
         rob.stop_simulation()
+        
+    return results
 
-
-def obstacle_avoidance_task1(rob: IRobobo, max_distance: float = 5.0, duration_seconds: int = 60, 
-                            save_data: bool = True, threshold: Optional[float] = None):
-    """
-    Task 1 - Advanced Obstacle Avoidance Algorithm
-    
-    The robot explores an environment with obstacles by moving as far and as fast as possible
-    while minimizing collisions. Uses a more sophisticated algorithm than the simple 
-    right-turn approach.
-    
-    Objectives:
-    - Maximize distance traveled 
-    - Minimize collision/near-collision events
-    - Explore the environment efficiently
-    - Use intelligent turning strategies
-    
-    Args:
-        rob: Robot interface instance (SimulationRobobo or HardwareRobobo)
-        max_distance: Maximum distance to travel (for safety)
-        duration_seconds: Maximum duration to run (seconds)
-        save_data: Whether to save sensor and performance data
-        threshold: Obstacle distance threshold (if None, uses default based on robot type)
-    
-    Returns:
-        Performance metrics and data if save_data is True
-    """
-    # Performance metrics
-    metrics = {
-        'total_distance': 0.0,
-        'total_time': 0.0,
-        'collision_events': 0,
-        'near_miss_events': 0,
-        'average_speed': 0.0,
-        'efficiency_score': 0.0
-    }
-    
-        # Data collection for analysis
-    data = {
-        'time': [],
-        'ir_sensors': [],
-        'left_speed': [],
-        'right_speed': [],
-        'robot_position': [],
-        'obstacle_detected': [],
-        'state': []
-    }
-    
-    if isinstance(rob, SimulationRobobo):
-        rob.play_simulation()
-        initial_pos = rob.get_position()
-    
-    start_time = time.time()
-    end_time = start_time + duration_seconds
-    last_position = None
-    total_distance = 0.0
-    
-    # Algorithm parameters - OPTIMIZED for transfer learning
-    if isinstance(rob, SimulationRobobo):
-        # Simulation threshold and speeds - OPTIMIZED for 0.10 normalized threshold
-        obstacle_threshold = threshold if threshold is not None else 200  # 200/2000 = 0.10
-        forward_speed = 60
-        turn_speed = 40
-    else:
-        # Hardware threshold and speeds - OPTIMIZED for 0.10 normalized threshold
-        obstacle_threshold = threshold if threshold is not None else 10   # 10/100 = 0.10
-        forward_speed = 50
-        turn_speed = 35
-    
-    # State machine for intelligent navigation
-    state = 'exploring'  # exploring, avoiding, turning_left, turning_right, backing_up
-    state_start_time = time.time()
-    preferred_direction = 'right'  # Default preference
-    
-    print(f"Starting Task 1 - Advanced Obstacle Avoidance")
-    print(f"Target: Travel {max_distance}m in {duration_seconds}s while avoiding obstacles")
-    
-    while time.time() < end_time and total_distance < max_distance:
-        current_time = time.time() - start_time
-        
-        # Initialize default motor speeds
-        left_speed = 0
-        right_speed = 0
-        
-        # Read sensors
-        ir_values = rob.read_irs()
-        
-        # Handle None values in IR readings
-        safe_ir_values = []
-        for i, val in enumerate(ir_values):
-            if val is None:
-                safe_ir_values.append(1.0 if isinstance(rob, SimulationRobobo) else 100.0)
-            else:
-                safe_ir_values.append(val)
-        
-        # Calculate collision risk based on front sensors
-        front_sensors = [safe_ir_values[2], safe_ir_values[3], safe_ir_values[4]]  # FrontL, FrontC, FrontR
-        min_front_distance = min(front_sensors)
-        
-        # Determine if obstacle detected - single threshold system
-        if min_front_distance < obstacle_threshold:
-            obstacle_detected = True
-            metrics['collision_events'] += 1
-            rob.set_emotion(Emotion.SURPRISED)  # Robot gets SURPRISED when obstacle detected
-        else:
-            obstacle_detected = False
-        
-        # Calculate position and distance if in simulation
-        if isinstance(rob, SimulationRobobo):
-            current_pos = rob.get_position()
-            if last_position is not None:
-                distance_step = math.sqrt(
-                    (current_pos.x - last_position.x)**2 + 
-                    (current_pos.y - last_position.y)**2
-                )
-                total_distance += distance_step
-            last_position = current_pos
-            pos_data = [current_pos.x, current_pos.y, current_pos.z]
-        else:
-            # For hardware, estimate distance from wheel encoder data
-            wheel_data = rob.read_wheels()
-            pos_data = [wheel_data.wheel_pos_l, wheel_data.wheel_pos_r, 0.0]
-        
-        # Advanced state machine for intelligent navigation
-        if state == 'exploring':
-            if obstacle_detected:
-                # Obstacle detected - start avoidance maneuver
-                state = 'avoiding'
-                state_start_time = time.time()
-                # Choose direction based on side sensor readings
-                left_clear = safe_ir_values[2] > safe_ir_values[4]  # FrontL vs FrontR
-                preferred_direction = 'left' if left_clear else 'right'
-                # Start avoidance turn
-                if preferred_direction == 'left':
-                    left_speed = forward_speed - 20
-                    right_speed = forward_speed
-                else:
-                    left_speed = forward_speed  
-                    right_speed = forward_speed - 20
-            else:
-                # Clear path - move forward at optimal speed
-                left_speed = forward_speed
-                right_speed = forward_speed
-                rob.set_emotion(Emotion.HAPPY)
-                
-        elif state == 'backing_up':
-            # Back up briefly then turn
-            if time.time() - state_start_time < 0.5:
-                left_speed = -turn_speed
-                right_speed = -turn_speed
-            else:
-                state = f'turning_{preferred_direction}'
-                state_start_time = time.time()
-                # Start the turn immediately
-                direction = preferred_direction
-                if direction == 'left':
-                    left_speed = -turn_speed // 2
-                    right_speed = turn_speed
-                else:  # right
-                    left_speed = turn_speed
-                    right_speed = -turn_speed // 2
-                
-        elif state == 'avoiding':
-            # Gradual avoidance - slight turn while moving forward
-            if obstacle_detected:
-                # Still detecting obstacle - continue or escalate to backing up
-                if min_front_distance < obstacle_threshold * 0.8:  # Very close
-                    state = 'backing_up'
-                    state_start_time = time.time()
-                    left_speed = -turn_speed
-                    right_speed = -turn_speed
-                else:
-                    # Continue avoidance turn
-                    if preferred_direction == 'left':
-                        left_speed = forward_speed - 20
-                        right_speed = forward_speed
-                    else:
-                        left_speed = forward_speed  
-                        right_speed = forward_speed - 20
-            else:
-                # Clear path - return to exploring
-                state = 'exploring'
-                left_speed = forward_speed
-                right_speed = forward_speed
-                    
-        elif state.startswith('turning_'):
-            # Active turning maneuver
-            direction = state.split('_')[1]
-            if time.time() - state_start_time > 1.0:  # Turn for 1 second
-                state = 'exploring'
-                left_speed = forward_speed
-                right_speed = forward_speed
-            elif direction == 'left':
-                left_speed = -turn_speed // 2
-                right_speed = turn_speed
-            else:  # right
-                left_speed = turn_speed
-                right_speed = -turn_speed // 2
-        
-        # Execute movement command
-        rob.move_blocking(left_speed, right_speed, 200)
-        
-        # Data collection
-        if save_data:
-            data['time'].append(current_time)
-            data['ir_sensors'].append(ir_values)
-            data['left_speed'].append(left_speed)
-            data['right_speed'].append(right_speed)
-            data['robot_position'].append(pos_data)
-            data['obstacle_detected'].append(obstacle_detected)
-            data['state'].append(state)
-        
-        # Progress reporting
-        if int(current_time) % 10 == 0 and int(current_time * 10) % 10 == 0:
-            print(f"Time: {current_time:.1f}s, Distance: {total_distance:.2f}m, State: {state}, Obstacle: {obstacle_detected}")
-    
-    # Stop robot
-    rob.move_blocking(0, 0, 100)
-    
-    # Calculate final metrics
-    metrics['total_distance'] = total_distance
-    metrics['total_time'] = time.time() - start_time
-    metrics['average_speed'] = total_distance / metrics['total_time'] if metrics['total_time'] > 0 else 0
-    
-    # Efficiency score: distance per unit time, penalized by collisions
-    collision_penalty = metrics['collision_events'] * 0.1 + metrics['near_miss_events'] * 0.05
-    metrics['efficiency_score'] = max(0, metrics['average_speed'] - collision_penalty)
-    
-    if isinstance(rob, SimulationRobobo):
-        rob.stop_simulation()
-    
-    # Report performance
-    print(f"\nTask 1 Performance Summary:")
-    print(f"Distance traveled: {metrics['total_distance']:.2f}m")
-    print(f"Time elapsed: {metrics['total_time']:.1f}s") 
-    print(f"Average speed: {metrics['average_speed']:.2f}m/s")
-    print(f"Collision events: {metrics['collision_events']}")
-    print(f"Near-miss events: {metrics['near_miss_events']}")
-    print(f"Efficiency score: {metrics['efficiency_score']:.3f}")
-    
-    # Save data and generate analysis
-    if save_data:
-        platform = 'simulation' if isinstance(rob, SimulationRobobo) else 'hardware'
-        save_task1_data(data, metrics, platform)
-        plot_task1_analysis(data, metrics, platform)
-        
-        return {'data': data, 'metrics': metrics}
-    
-    return metrics
-
-
-def wall_following_algorithm(rob: IRobobo, duration_seconds: int = 60, wall_distance: float = 0.3):
-    """
-    Alternative Task 1 approach: Wall-following algorithm
-    
-    Follows walls to systematically explore the environment while maintaining
-    a safe distance from obstacles.
-    
-    Args:
-        rob: Robot interface instance
-        duration_seconds: Duration to run the algorithm  
-        wall_distance: Target distance to maintain from walls
-    """
-    if isinstance(rob, SimulationRobobo):
-        rob.play_simulation()
-        wall_threshold = wall_distance
-        forward_speed = 40
-        turn_speed = 30
-    else:
-        wall_threshold = wall_distance * 50  # Convert to hardware scale
-        forward_speed = 35
-        turn_speed = 25
-    
-    start_time = time.time()
-    end_time = start_time + duration_seconds
-    
-    print(f"Starting wall-following algorithm for {duration_seconds}s")
-    
-    while time.time() < end_time:
-        ir_values = rob.read_irs()
-        
-        # Handle None values
-        safe_ir_values = []
-        for val in ir_values:
-            if val is None:
-                safe_ir_values.append(1.0 if isinstance(rob, SimulationRobobo) else 100.0)
-            else:
-                safe_ir_values.append(val)
-        
-        # Right wall following - use right sensors
-        right_sensor = safe_ir_values[4]  # FrontR
-        front_sensor = safe_ir_values[3]  # FrontC
-        
-        if front_sensor < wall_threshold * 1.2:
-            # Wall ahead - turn left
-            left_speed = -turn_speed // 2
-            right_speed = turn_speed
-        elif right_sensor > wall_threshold * 1.5:
-            # No wall on right - turn right to find wall
-            left_speed = turn_speed
-            right_speed = turn_speed // 2
-        elif right_sensor < wall_threshold * 0.8:
-            # Too close to wall - turn left slightly
-            left_speed = forward_speed - 10
-            right_speed = forward_speed
-        else:
-            # Good distance - move forward
-            left_speed = forward_speed
-            right_speed = forward_speed
-        
-        rob.move_blocking(left_speed, right_speed, 200)
-    
-    rob.move_blocking(0, 0, 100)
-    
-    if isinstance(rob, SimulationRobobo):
-        rob.stop_simulation()
-    
-    print("Wall-following algorithm completed")
-
-
-def save_task1_data(data, metrics, platform):
-    """Save Task 1 data to CSV files"""
-    # Convert to DataFrame
-    df = pd.DataFrame({
-        'time': data['time'],
-        'left_speed': data['left_speed'], 
-        'right_speed': data['right_speed'],
-        'obstacle_detected': data['obstacle_detected'],
-        'state': data['state']
-    })
-    
-    # Add IR sensor columns
-    for i in range(8):
-        df[f'ir_sensor_{i}'] = [sensors[i] if sensors[i] is not None else float('nan') 
-                              for sensors in data['ir_sensors']]
-    
-    # Add position columns
-    df['pos_x'] = [pos[0] for pos in data['robot_position']]
-    df['pos_y'] = [pos[1] for pos in data['robot_position']]
-    df['pos_z'] = [pos[2] for pos in data['robot_position']]
-    
-    # Save main data
-    timestamp = int(time.time())
-    data_file = FIGURES_DIR / f"task1_{platform}_data_{timestamp}.csv"
-    df.to_csv(data_file, index=False)
-    
-    # Save metrics
-    metrics_file = FIGURES_DIR / f"task1_{platform}_metrics_{timestamp}.csv"
-    metrics_df = pd.DataFrame([metrics])
-    metrics_df.to_csv(metrics_file, index=False)
-    
-    print(f"Data saved to {data_file}")
-    print(f"Metrics saved to {metrics_file}")
-
-
-def plot_task1_analysis(data, metrics, platform):
-    """Generate comprehensive analysis plots for Task 1"""
-    timestamp = int(time.time())
-    
-    # Plot 1: Robot trajectory (simulation only)
-    if platform == 'simulation':
-        plt.figure(figsize=(10, 8))
-        pos_x = [pos[0] for pos in data['robot_position']]
-        pos_y = [pos[1] for pos in data['robot_position']]
-        
-        # Color trajectory by obstacle detection
-        colors = {True: 'red', False: 'green'}
-        for i in range(len(pos_x)-1):
-            color = colors.get(data['obstacle_detected'][i], 'blue')
-            plt.plot(pos_x[i:i+2], pos_y[i:i+2], color=color, linewidth=2)
-        
-        plt.title(f'Robot Trajectory - Task 1 ({platform})')
-        plt.xlabel('X Position (m)')
-        plt.ylabel('Y Position (m)')
-        plt.grid(True)
-        plt.axis('equal')
-        
-        # Add legend for obstacle detection
-        from matplotlib.lines import Line2D
-        legend_elements = [Line2D([0], [0], color='green', lw=2, label='Clear Path'),
-                          Line2D([0], [0], color='red', lw=2, label='Obstacle Detected')]
-        plt.legend(handles=legend_elements)
-        
-        plt.savefig(FIGURES_DIR / f'task1_{platform}_trajectory_{timestamp}.png')
-        plt.close()
-    
-    # Plot 2: Speed and risk over time
-    plt.figure(figsize=(12, 8))
-    
-    plt.subplot(3, 1, 1)
-    plt.plot(data['time'], data['left_speed'], label='Left Speed', alpha=0.7)
-    plt.plot(data['time'], data['right_speed'], label='Right Speed', alpha=0.7)
-    plt.title(f'Motor Commands - Task 1 ({platform})')
-    plt.ylabel('Speed')
-    plt.legend()
-    plt.grid(True)
-    
-    plt.subplot(3, 1, 2)
-    # Convert obstacle detection to numeric for plotting
-    obstacle_numeric = [1 if detected else 0 for detected in data['obstacle_detected']]
-    plt.plot(data['time'], obstacle_numeric, 'r-', linewidth=2)
-    plt.title('Obstacle Detection')
-    plt.ylabel('Obstacle Detected')
-    plt.yticks([0, 1], ['No', 'Yes'])
-    plt.grid(True)
-    
-    plt.subplot(3, 1, 3)
-    # Plot front IR sensors
-    for i in [2, 3, 4]:  # Front sensors
-        sensor_data = [sensors[i] if sensors[i] is not None else float('nan') 
-                      for sensors in data['ir_sensors']]
-        plt.plot(data['time'], sensor_data, label=f'Front IR {i}')
-    plt.title('Front IR Sensors')
-    plt.xlabel('Time (s)')
-    plt.ylabel('Distance')
-    plt.legend()
-    plt.grid(True)
-    
-    plt.tight_layout()
-    plt.savefig(FIGURES_DIR / f'task1_{platform}_analysis_{timestamp}.png')
-    plt.close()
-    
-    # Plot 3: Performance summary
-    plt.figure(figsize=(10, 6))
-    
-    # Performance bar chart
-    categories = ['Distance (m)', 'Avg Speed (m/s)', 'Efficiency', 'Collisions', 'Near Misses']
-    values = [
-        metrics['total_distance'],
-        metrics['average_speed'], 
-        metrics['efficiency_score'],
-        metrics['collision_events'],
-        metrics['near_miss_events']
-    ]
-    
-    colors = ['blue', 'green', 'purple', 'red', 'orange']
-    bars = plt.bar(categories, values, color=colors, alpha=0.7)
-    
-    plt.title(f'Task 1 Performance Summary ({platform})')
-    plt.ylabel('Value')
-    plt.xticks(rotation=45)
-    
-    # Add value labels on bars
-    for bar, value in zip(bars, values):
-        plt.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.01,
-                f'{value:.2f}', ha='center', va='bottom')
-    
-    plt.tight_layout()
-    plt.savefig(FIGURES_DIR / f'task1_{platform}_performance_{timestamp}.png')
-    plt.close()
-    
-    print(f"Analysis plots saved to {FIGURES_DIR}")
 
 class RobotEnvironment:
-    """Environment wrapper for Robobo robot RL training"""
+    """Environment wrapper for Task 2: Green Food Collection using Reinforcement Learning
     
-    def __init__(self, robot: IRobobo, max_episode_steps: int = 1000, obstacle_threshold: Optional[float] = None):
+    This environment is specifically designed for Task 2, which involves:
+    - Detecting and collecting 7 green food boxes within 3 minutes
+    - Using computer vision for food detection and localization
+    - Implementing intelligent navigation with obstacle avoidance
+    - Providing a 13-dimensional state space: [8 IR sensors + 3 vision + 2 orientation]
+    - Supporting 9 discrete actions optimized for food collection
+    """
+    
+    def __init__(self, robot: IRobobo, vision_processor, max_episode_steps: int = 1000, 
+                 max_episode_time: int = 180):
         self.robot = robot
+        self.vision_processor = vision_processor
         self.max_episode_steps = max_episode_steps
+        self.max_episode_time = max_episode_time  # 3 minutes for Task 2
         self.step_count = 0
         self.is_simulation = isinstance(robot, SimulationRobobo)
         
-        # Action space: [left_speed, right_speed] discretized (removed stop action)
+        # Action space: Task 2 specific actions with stop capability for food collection
         self.action_space_size = 9
-        self.actions = [(-50, -50), (-25, 25), (-10, 30), (-10, 50), (25, 25), (50, 50), 
-                       (50, 0), (50, -10), (25, -25)]
+        self.actions = [
+            (0, 0),      # 0: Stop (useful for precise food collection)
+            (-50, -50),  # 1: Backward
+            (-30, 30),   # 2: Turn Left
+            (-15, 30),   # 3: Turn Left Slight
+            (40, 60),    # 4: Forward Left
+            (60, 60),    # 5: Forward
+            (60, 40),    # 6: Forward Right
+            (30, -15),   # 7: Turn Right Slight
+            (30, -30),   # 8: Turn Right
+        ]
         
         # Action descriptions for debugging
         self.action_descriptions = [
-            "Backward", "Turn Left", "Slight Left", "Sharp Left", "Forward Slow", "Forward Fast",
-            "Turn Right", "Sharp Right", "Slight Right"
+            "Stop", "Backward", "Turn Left", "Turn Left Slight", "Forward Left", 
+            "Forward", "Forward Right", "Turn Right Slight", "Turn Right"
         ]
         
-        # State space: IR sensors + previous action (optimized - removed orientation)
-        self.state_size = 9  # 8 IR + 1 prev_action (robot never tilts)
+        # State space: IR sensors (8) + vision data (3) + orientation (2) = 13 dimensions
+        # Vision data: [food_detected, food_distance, food_angle]
+        # Orientation: [yaw_normalized, pitch_normalized]
+        self.state_size = 13
         
-        # UNIFIED THRESHOLDS - Minimized differences for better transfer learning
+        # Task 2 specific tracking
+        self.food_collected = 0
+        self.total_food_target = 7
+        self.episode_start_time = None
+        self.last_food_positions = []
+        
+        # Obstacle detection thresholds (for collision avoidance while collecting food)
         if self.is_simulation:
-            # In simulation, IR values are distances: smaller = closer
-            # OPTIMIZED: 200 units gives ~0.10 normalized threshold (200/2000 = 0.10)
-            self.obstacle_threshold = obstacle_threshold if obstacle_threshold is not None else 200
+            self.obstacle_threshold = 200  # Distance-based threshold for simulation
         else:
-            # In hardware, IR values are intensity: higher = closer
-            # OPTIMIZED: 10 units gives ~0.10 normalized threshold (10/100 = 0.10)
-            self.obstacle_threshold = obstacle_threshold if obstacle_threshold is not None else 10
+            self.obstacle_threshold = 10   # Intensity-based threshold for hardware
         
         self.reset()
     
     def reset(self):
         """Reset environment for new episode"""
         self.step_count = 0
+        
         if self.is_simulation:
-            self.robot.play_simulation()
-            # Give simulation time to settle
+            # Reset robot position in simulation
+            self.robot.stop_simulation()
             time.sleep(0.5)
+            self.robot.play_simulation()
+            time.sleep(1.0)
         
-        self.prev_action = 5  # Start with Forward Fast action (index 5)
-        self.last_position = None
-        self.episode_distance = 0.0
-        self.grace_period_steps = 15  # Increased grace period for complex initial movements
-        self.stuck_counter = 0  # Counter for detecting stuck behavior
+        # Reset Task 2 specific counters
+        self.food_collected = 0
+        self.episode_start_time = time.time()
+        self.last_food_positions = []
         
-        # Debug: Check initial IR readings
+        # Debug: Check initial state
         initial_state = self._get_state()
         ir_raw = self.robot.read_irs()
-        print(f"Reset - IR readings: {ir_raw[:4]}, Threshold: {self.obstacle_threshold}")
+        print(f"Reset - IR readings: {ir_raw[:4]}, Food collected: {self.food_collected}")
         
         return initial_state
     
     def _get_state(self):
-        """Get current state representation (optimized 9D without orientation)"""
-        # IR sensors (8 dimensions)
+        """Get current state representation for Task 2: [IR sensors + vision + orientation]"""
+        # IR sensors (8 dimensions) - Correct order: [BackL, BackR, FrontL, FrontR, FrontC, FrontRR, BackC, FrontLL]
         ir_values = self.robot.read_irs()
         ir_normalized = []
         for val in ir_values:
@@ -699,13 +297,36 @@ class RobotEnvironment:
                     # Normalize to 0-1 where 0 = very close, 1 = far away
                     ir_normalized.append(min(val / 2000.0, 1.0))
                 else:
+                    # In hardware, values are intensity-based: higher = closer, lower = farther
+                    # Normalize to 0-1 where 0 = far away, 1 = very close
                     ir_normalized.append(min(val / 100.0, 1.0))
         
-        # Previous action (1 dimension) - helps with momentum understanding
-        prev_action_norm = [self.prev_action / float(self.action_space_size - 1)]
+        # Vision data (3 dimensions: food_detected, food_distance, food_angle)
+        camera_frame = self.robot.read_image_front()
+        food_objects, _ = self.vision_processor.detect_green_food(camera_frame)
         
-        # Combine: 8 IR + 1 prev_action = 9 dimensions (removed orientation)
-        state = np.array(ir_normalized + prev_action_norm, dtype=np.float32)
+        if food_objects and len(food_objects) > 0:
+            # Use the most confident detection
+            best_food = food_objects[0]
+            food_detected = 1.0
+            food_distance = min(1.0, best_food['distance'] / 3.0)  # Normalize to 0-1
+            food_angle = best_food['angle'] / 30.0  # Normalize to -1 to +1
+        else:
+            food_detected = 0.0
+            food_distance = 1.0  # Max distance when no food detected
+            food_angle = 0.0
+        
+        # Orientation (2 dimensions)
+        orientation = self.robot.read_orientation()
+        if orientation:
+            orient_x = orientation.yaw / 180.0  # Normalize to -1 to +1
+            orient_y = orientation.pitch / 180.0
+        else:
+            orient_x, orient_y = 0.0, 0.0
+        
+        # Combine: 8 IR + 3 vision + 2 orientation = 13 dimensions
+        state = np.array(ir_normalized + [food_detected, food_distance, food_angle, orient_x, orient_y], 
+                        dtype=np.float32)
         return state
     
     def step(self, action_idx):
@@ -730,1310 +351,765 @@ class RobotEnvironment:
         
         # Debug: Print reward info occasionally
         if self.step_count <= 10 or self.step_count % 50 == 0:
-            print(f"  Reward: {reward:.2f}, Info: {info}")
+            print(f"  Reward: {reward:.2f}, Food collected: {self.food_collected}, Info: {info}")
         
         # Set emotion based on reward and situation
-        if info.get('collision', False):
-            emotion = Emotion.SAD
-        elif info.get('near_miss', False):
-            emotion = Emotion.SURPRISED
-        elif reward > 5.0:
+        if info.get('food_collected', False):
             emotion = Emotion.HAPPY
-        elif reward < -2.0:
+        elif info.get('collision', False):
+            emotion = Emotion.SAD
+        elif info.get('food_detected', False):
+            emotion = Emotion.SURPRISED  # Excited about finding food
+        elif reward > 10.0:
+            emotion = Emotion.HAPPY
+        elif reward < -5.0:
             emotion = Emotion.ANGRY
         else:
             emotion = Emotion.NORMAL
         
-        # Store emotion in info for dynamic display
+        # Store emotion and additional info
         info['emotion'] = emotion
-        info['ir_sensors'] = next_state[:8]  # Store IR sensor readings
+        info['ir_sensors'] = list(next_state[:8])  # Store IR sensor readings as list
+        info['vision_data'] = list(next_state[8:11])  # Store vision data as list
         info['action_taken'] = self.action_descriptions[action_idx]
+        info['food_collected_count'] = int(self.food_collected)
         
         # Check if episode is done
-        # Only end episode when max steps reached or robot is stuck
-        # Collisions should NOT end the episode - robot should learn to avoid them
-        done = (self.step_count >= self.max_episode_steps or info['stuck'])
+        time_elapsed = time.time() - self.episode_start_time if self.episode_start_time else 0
+        done = (
+            self.step_count >= self.max_episode_steps or 
+            time_elapsed >= self.max_episode_time or
+            self.food_collected >= self.total_food_target
+        )
         
-        self.prev_action = action_idx
+        # Update food collection count
+        if info.get('food_collected', False):
+            self.food_collected += 1
         
         return next_state, reward, done, info
     
     def _calculate_reward(self, action_idx, state):
-        """Calculate reward based on current state and action"""
-        info = {'collision': False, 'near_miss': False, 'stuck': False, 'distance_reward': 0.0}
+        """Calculate reward for Task 2: Green Food Collection"""
+        info = {
+            'collision': False, 
+            'food_collected': False, 
+            'food_detected': False,
+            'ir_sensors': [],
+            'vision_data': [],
+            'action_taken': '',
+            'food_collected_count': 0
+        }
         reward = 0.0
         
-        # Get raw IR sensor values for reward calculation
-        # CORRECTED Sensor layout: [BackL, BackR, FrontL, FrontR, FrontC, FrontRR, BackC, FrontLL]
-        #                          [  0,    1,     2,      3,      4,      5,       6,     7  ]
-        # 
-        # Robot Layout (Top View):
-        #     7(FrontLL)    4(FrontC)    5(FrontRR)
-        #          ↖          ↑           ↗
-        #     2(FrontL)      ROBOT      3(FrontR)  
-        #          ←                         →
-        #     0(BackL)       6(BackC)      1(BackR)
-        #          ↙          ↓           ↘
-        #
-        # CORRECTED SENSOR GROUPING:
-        # FRONT sensors (true forward-facing only): [4, 5, 7] = [FrontC, FrontRR, FrontLL]
-        # SIDE sensors: [2, 3] = [FrontL, FrontR] - these are side-facing, not front!
-        # BACK sensors: [0, 1, 6] = [BackL, BackR, BackC]
-        ir_raw = self.robot.read_irs()
+        # Extract state components
+        ir_values = state[:8]  # IR sensor readings
+        food_detected = state[8] > 0.5  # Food detection flag
+        food_distance = state[9]  # Normalized food distance
+        food_angle = state[10]  # Normalized food angle (-1 to +1)
         
-        # Separate sensors by directional relevance for collision detection
-        front_ir_raw = []
-        back_ir_raw = []
+        # Time-based calculations
+        time_elapsed = time.time() - self.episode_start_time if self.episode_start_time else 0
+        time_remaining = max(0, self.max_episode_time - time_elapsed)
         
-        # TRUE Front sensors only: [4, 5, 7] (FrontC, FrontRR, FrontLL)
-        # Excludes side sensors [2, 3] to prevent false front collision detection
-        for i in [4, 5, 7]:
-            if ir_raw[i] is not None:
-                front_ir_raw.append(ir_raw[i])
-        
-        # Back sensors: [0, 1, 6] (BackL, BackR, BackC)
-        for i in [0, 1, 6]:
-            if ir_raw[i] is not None:
-                back_ir_raw.append(ir_raw[i])
-        
-        # Calculate minimum distances for each direction
-        min_front_ir = min(front_ir_raw) if front_ir_raw else (2000 if self.is_simulation else 100)
-        min_back_ir = min(back_ir_raw) if back_ir_raw else (2000 if self.is_simulation else 100)
-        
-        # UNIFIED ACTION-BASED REWARD SYSTEM (Consistent across simulation and hardware)
-        # This ensures better sim-to-hardware transfer by using the same reward structure
-        if action_idx in [4, 5]:  # Forward movements: slow, fast
-            base_reward = 2.0
-            # Give extra reward for pure forward actions
-            if action_idx == 5:  # Forward Fast
-                base_reward = 3.0
-            elif action_idx == 4:  # Forward Slow  
-                base_reward = 2.5
-            reward += base_reward
-            info['distance_reward'] = base_reward
+        # 1. Food Detection Reward
+        if food_detected:
+            reward += 15  # Reward for seeing food
+            info['food_detected'] = True
             
-            # Optional: Still track distance in simulation for analysis (but don't use for reward)
-            if self.is_simulation:
-                current_pos = self.robot.get_position()
-                if self.last_position is not None:
-                    distance = math.sqrt(
-                        (current_pos.x - self.last_position.x)**2 + 
-                        (current_pos.y - self.last_position.y)**2
-                    )
-                    self.episode_distance += distance
-                    info['actual_distance'] = distance  # For analysis only
-                self.last_position = current_pos
-        else:
-            # Small base rewards for other actions to encourage movement
-            if action_idx == 0:  # Backward
-                reward += 1.0
-                info['distance_reward'] = 1.0
-            else:  # Turning actions
-                reward += 0.5
-                info['distance_reward'] = 0.5
+            # 2. Food Approach Progress Reward
+            # Distance reward (closer is better)
+            distance_reward = (1.0 - food_distance) * 20
+            reward += distance_reward
+            
+            # Alignment reward (facing food is better)
+            alignment_reward = (1.0 - abs(food_angle)) * 10
+            reward += alignment_reward
         
-        # COMPREHENSIVE DIRECTIONAL COLLISION DETECTION
-        # CORRECTED Action-direction mapping:
-        # 0: Backward     - Check back sensors [0, 1, 6]
-        # 1-3: Left turns - Check all sensors (turning requires awareness of all directions)
-        # 4-5: Forward    - Check TRUE front sensors [4, 5, 7] (excludes side sensors [2,3])
-        # 6-8: Right turns- Check all sensors (turning requires awareness of all directions)
+        # 3. Food Collection Reward (check for collision with food)
+        if self._check_food_collision():
+            base_reward = 100
+            time_bonus = (time_remaining / self.max_episode_time) * 50  # Earlier = better
+            reward += base_reward + time_bonus
+            info['food_collected'] = True
+            
+        # 4. Time Pressure Penalty
+        time_pressure = 1.0 - (time_remaining / self.max_episode_time)
+        time_penalty = -(1.0 + 2.0 * time_pressure)
+        reward += time_penalty
         
-        # UNIFIED OBSTACLE DETECTION - Convert all sensor readings to normalized scale (0-1)
-        # where 0 = very close obstacle, 1 = no obstacle
-        def normalize_sensor_reading(raw_value, is_sim):
-            if is_sim:
-                # Simulation: lower values = closer obstacles, normalize to 0-1
-                return raw_value / 2000.0
+        # 5. Action-specific rewards and penalties
+        if action_idx == 0:  # Stop action
+            if food_detected and food_distance < 0.3:
+                # Reward stopping near food for precise collection
+                reward += 5
             else:
-                # Hardware: higher values = closer obstacles, invert and normalize to 0-1
-                return max(0, 1.0 - (raw_value / 100.0))
+                # Penalty for stopping when not near food
+                reward -= 15
+        elif action_idx == 5:  # Forward action
+            reward += 2  # Base reward for forward movement
+        elif action_idx in [1]:  # Backward
+            reward += 1  # Small reward for backward movement
+        else:  # Turning actions
+            reward += 0.5  # Small reward for turning
         
-        front_normalized = normalize_sensor_reading(min_front_ir, self.is_simulation)
-        back_normalized = normalize_sensor_reading(min_back_ir, self.is_simulation)
-        
-        # UNIFIED THRESHOLD - Convert threshold to same normalized scale
-        threshold_normalized = normalize_sensor_reading(self.obstacle_threshold, self.is_simulation)
-        
-        # UNIFIED NEAR-MISS DETECTION - Use consistent multiplier
-        near_miss_multiplier = 5.0  # Same for both platforms
-        
-        collision_detected = False
-        near_miss_detected = False
-        
-        # UNIFIED GRACE PERIOD - Platform-independent logic
-        if hasattr(self, 'grace_period_steps') and self.grace_period_steps > 0:
-            self.grace_period_steps -= 1
-            # Context-aware grace period - check appropriate sensors based on action
-            if action_idx == 0:  # Backward action - check back sensors
-                path_clear = back_normalized > 0.1
-            elif action_idx in [4, 5]:  # Forward actions - check front sensors
-                path_clear = front_normalized > 0.1
-            else:  # Turning actions - check both front and back
-                path_clear = min(front_normalized, back_normalized) > 0.1
-            
-            if path_clear:  # Path is clear - encourage movement in chosen direction
-                if action_idx == 5:  # Forward Fast action
-                    reward += 5.0
-                    self.robot.set_emotion(Emotion.HAPPY)
-                elif action_idx == 4:  # Forward Slow action
-                    reward += 3.0
-                    self.robot.set_emotion(Emotion.HAPPY)
-                elif action_idx == 0:  # Backward action when path is clear
-                    reward += 2.0
-                    self.robot.set_emotion(Emotion.NORMAL)
-                else:
-                    reward += 1.0  # Mild positive reward for any other movement
-                    self.robot.set_emotion(Emotion.NORMAL)
-            else:  # Path blocked - encourage appropriate alternative actions
-                # Even during grace period, check for actual collisions in the turn direction
-                if action_idx in [1, 2, 3, 6, 7, 8]:  # Any turn when path blocked
-                    # Check if the turn is safe (not causing collision)
-                    min_relevant_normalized = min(front_normalized, back_normalized)
-                    if min_relevant_normalized < threshold_normalized:
-                        # Collision during turn - penalize even in grace period
-                        collision_detected = True
-                        reward -= 25.0  
-                        info['collision'] = True
-                        self.robot.set_emotion(Emotion.SAD)
-                    elif min_relevant_normalized < threshold_normalized * near_miss_multiplier:
-                        # Near miss during turn - light penalty even in grace period
-                        near_miss_detected = True
-                        reward -= 2.5
-                        info['near_miss'] = True
-                        self.robot.set_emotion(Emotion.SURPRISED)
-                    else:
-                        # Safe turn when path blocked - reward
-                        reward += 4.0  
-                        self.robot.set_emotion(Emotion.NORMAL)
-                elif action_idx == 0 and front_normalized <= 0.1:  # Backup when front blocked
-                    # Check if backup is safe
-                    if back_normalized < threshold_normalized:
-                        # Backing into collision - penalize
-                        collision_detected = True
-                        reward -= 25.0
-                        info['collision'] = True
-                        self.robot.set_emotion(Emotion.SAD)
-                    elif back_normalized < threshold_normalized * near_miss_multiplier:
-                        # Near miss while backing up
-                        near_miss_detected = True
-                        reward -= 2.5
-                        info['near_miss'] = True
-                        self.robot.set_emotion(Emotion.SURPRISED)
-                    else:
-                        # Safe backup when front blocked - reward
-                        reward += 3.0  
-                        self.robot.set_emotion(Emotion.NORMAL)
-                elif action_idx in [4, 5] and front_normalized <= 0.1:  # Forward into front obstacle
-                    reward -= 5.0  # Penalty for moving toward front obstacle
-                    self.robot.set_emotion(Emotion.SURPRISED)
-                elif action_idx == 0 and back_normalized <= 0.1:  # Backward into back obstacle
-                    reward -= 5.0  # Penalty for backing into back obstacle
-                    self.robot.set_emotion(Emotion.SURPRISED)
-                else:
-                    reward += 1.0  # Default small reward
+        # 6. Obstacle Avoidance (prevent collisions while collecting food)
+        min_ir = min(ir_values)
+        if self.is_simulation:
+            # In simulation, lower values = closer obstacles
+            collision_threshold = self.obstacle_threshold / 2000.0  # Normalize
         else:
-            # UNIFIED COLLISION DETECTION - Platform-independent logic
-            if action_idx == 0:  # Backward action - check back sensors
-                if back_normalized < threshold_normalized:
-                    collision_detected = True
-                    reward -= 50.0
-                    info['collision'] = True
-                    self.robot.set_emotion(Emotion.SAD)
-                elif back_normalized < threshold_normalized * near_miss_multiplier:
-                    near_miss_detected = True
-                    reward -= 5.0
-                    info['near_miss'] = True
-                    self.robot.set_emotion(Emotion.SURPRISED)
-                else:
-                    reward += 1.0  # Small reward for safe backward movement
-                    self.robot.set_emotion(Emotion.NORMAL)
-            elif action_idx in [4, 5]:  # Forward actions - check front sensors
-                if front_normalized < threshold_normalized:
-                    collision_detected = True
-                    reward -= 50.0
-                    info['collision'] = True
-                    self.robot.set_emotion(Emotion.SAD)
-                elif front_normalized < threshold_normalized * near_miss_multiplier:
-                    near_miss_detected = True
-                    reward -= 5.0
-                    info['near_miss'] = True
-                    self.robot.set_emotion(Emotion.SURPRISED)
-                else:
-                    reward += 2.0  # Good reward for safe forward movement
-                    self.robot.set_emotion(Emotion.HAPPY)
-            else:  # Turning actions - check both front and back for comprehensive awareness
-                min_relevant_normalized = min(front_normalized, back_normalized)
-                if min_relevant_normalized < threshold_normalized:
-                    collision_detected = True
-                    reward -= 25.0  # Reduced penalty for turning collisions
-                    info['collision'] = True
-                    self.robot.set_emotion(Emotion.SAD)
-                elif min_relevant_normalized < threshold_normalized * near_miss_multiplier:
-                    near_miss_detected = True
-                    reward -= 2.5  # Reduced penalty for turning near-misses
-                    info['near_miss'] = True
-                    self.robot.set_emotion(Emotion.SURPRISED)
-                else:
-                    reward += 1.5  # Reward for safe turning
-                    self.robot.set_emotion(Emotion.NORMAL)
+            # In hardware, higher values = closer obstacles
+            collision_threshold = self.obstacle_threshold / 100.0  # Normalize
         
-        # Adaptive turning penalty based on obstacle proximity
-        # Use normalized state values for this check
-        front_sensors_norm = state[:3]  # Front sensors are first 3 in 9D state
-        back_sensors_norm = state[5:8]  # Back sensors in 9D state (indices 5, 6, 7)
+        if min_ir < collision_threshold:
+            reward -= 20
+            info['collision'] = True
         
-        # Only penalize turning when there's actually space to move straight
-        # This prevents excessive turning when the robot is cornered
-        if action_idx in [1, 2, 3, 6, 7, 8]:  # All turning actions
-            # Check if there's clear space ahead for forward movement
-            if np.mean(front_sensors_norm) < 0.3:  # Clear path ahead
-                # Check if there's clear space behind for backward movement  
-                if np.mean(back_sensors_norm) < 0.3:  # Clear path behind too
-                    # Both directions clear - mild penalty for unnecessary turning
-                    reward -= 0.2  # Very reduced penalty
-                else:
-                    # Only forward clear - small penalty since turning might be strategic
-                    reward -= 0.1
-            # If obstacles detected in movement directions, no penalty for turning
-            # (turning is actually the smart choice)
-        
-        # Check if stuck - robot should always be moving now (no stop action available)
-        # This condition is now less relevant since stop action is removed
-        ir_state_values = state[:8]  # First 8 values are IR sensors
-        if np.all(ir_state_values > 0.9):  # Very high threshold for stuck detection
-            info['stuck'] = True
-        
-        # IMPLEMENTATION COMPLETE: Unified Reward System with CORRECTED Sensor Grouping
-        # ✅ UNIFIED: Single reward logic for both simulation and hardware platforms
-        # ✅ CORRECTED: True front sensors [4,5,7] only - excludes side sensors [2,3] to prevent false front collisions
-        # ✅ Directional collision detection: Forward actions check TRUE front sensors, backward actions check back sensors [0,1,6]
-        # ✅ Action-aware reward system: Different penalties/rewards based on action direction and sensor readings
-        # ✅ Grace period improvements: Context-aware path checking for smarter initial learning
-        # ✅ Turning penalties: Adaptive penalties that consider obstacle proximity in all directions
-        # ✅ Platform normalization: All sensor values normalized to 0-1 scale for unified logic
-        # ✅ Prevents getting stuck: Robot can now learn to avoid obstacles when backing up
-        # ✅ Side sensor separation: [2,3] excluded from front detection to allow lateral movement
+        # 7. Mission Progress Bonus
+        if self.food_collected >= 6:  # Almost complete
+            reward += 30
+        elif self.food_collected >= 4:  # Good progress
+            reward += 15
         
         return reward, info
+        
+    def _check_food_collision(self):
+        """Check if robot has collided with food (simplified detection)"""
+        # In real implementation, this would be handled by the simulation
+        # or detected through vision (food disappearing from view when very close)
+        # For now, we'll use a simplified approach based on very close food detection
+        
+        camera_frame = self.robot.read_image_front()
+        food_objects, _ = self.vision_processor.detect_green_food(camera_frame)
+        
+        if food_objects:
+            closest_food = min(food_objects, key=lambda x: x['distance'])
+            # If food is very close and centered, consider it collected
+            if closest_food['distance'] < 0.2 and abs(closest_food['angle']) < 10:
+                return True
+                
+        return False
 
 
-class QLearningAgent:
-    """Q-Learning agent with discretized state space"""
+# ============================================================================
+# RL AGENTS MOVED TO SEPARATE MODULES
+# ============================================================================
+# 
+# The following RL agents have been moved to separate files for better organization:
+# - DQNAgent: dqn_agent.py
+# - QLearningAgent: qlearning_agent.py  
+# - PolicyGradientAgent: policy_gradient_agent.py
+# - ActorCriticAgent: actor_critic_agent.py
+#
+# Use create_rl_agent() from agent_factory.py to instantiate agents
+#
+
+# ============================================================================
+# TASK 2: GREEN FOOD COLLECTION USING OPENCV + RL
+# ============================================================================
+
+# DQN Network and Agent classes have been moved to dqn_agent.py
+# These classes include:
+# - DQNNetwork: Deep Q-Network architecture with fully connected layers
+# - DQNAgent: DQN agent with experience replay, target network, and epsilon-greedy exploration
+
+
+# Policy Network and Policy Gradient Agent classes have been moved to policy_gradient_agent.py
+# These classes include:
+# - PolicyNetwork: Neural network for REINFORCE with exploration bias
+# - PolicyGradientAgent: REINFORCE policy gradient agent with context-aware action filtering
+
+
+# Actor-Critic Network and Agent classes have been moved to actor_critic_agent.py
+# These classes include:
+# - ActorCriticNetwork: Neural network with shared features for actor-critic algorithm
+# - ActorCriticAgent: A2C agent with value function and policy optimization
+
+
+# Q-Learning Agent class has been moved to qlearning_agent.py
+# This class includes:
+# - QLearningAgent: Q-Learning agent with epsilon-greedy exploration and discrete state space
+
+
+# Agent factory function has been moved to agent_factory.py
+# Use create_rl_agent() function for agent instantiation
+
+# ============================================================================
+# TASK 2: GREEN FOOD COLLECTION USING OPENCV + DQN
+# ============================================================================
+
+class FoodVisionProcessor:
+    """Computer vision processor for green food detection with dual masking"""
     
-    def __init__(self, state_size: int, action_size: int, learning_rate: float = 0.1, 
-                 epsilon: float = 1.0, epsilon_decay: float = 0.995, epsilon_min: float = 0.01,
-                 gamma: float = 0.95):
-        self.state_size = state_size
-        self.action_size = action_size
-        self.learning_rate = learning_rate
-        self.epsilon = epsilon
-        self.epsilon_decay = epsilon_decay
-        self.epsilon_min = epsilon_min
-        self.gamma = gamma
+    def __init__(self, environment_type="simulation"):
+        self.environment_type = environment_type
+        self.setup_environment_config()
         
-        self.q_table = {}
-        self.training_rewards = []
-        self.training_losses = []
-    
-    def _discretize_state(self, state):
-        """Convert continuous state to discrete bins"""
-        bins = 10
-        discrete_state = []
+    def setup_environment_config(self):
+        """Configure parameters based on environment (simulation vs hardware)"""
+        if self.environment_type == "simulation":
+            # Simulation: More predictable lighting, cleaner colors
+            self.green_ranges = {
+                'primary': {'lower': np.array([40, 60, 60]), 'upper': np.array([80, 255, 255])},
+                'backup': {'lower': np.array([35, 40, 40]), 'upper': np.array([85, 255, 255])}
+            }
+            self.morphology_kernels = {
+                'opening': cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)),
+                'closing': cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5)),
+                'dilation': cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2, 2))
+            }
+            self.min_area = 50
+            self.max_area_ratio = 0.15
+            self.distance_calibration = {'reference_area': 1000, 'reference_distance': 1.0}
+            
+        else:  # Hardware
+            # Hardware: Variable lighting, noisy images, need robust detection
+            self.green_ranges = {
+                'primary': {'lower': np.array([30, 30, 30]), 'upper': np.array([90, 255, 255])},
+                'backup': {'lower': np.array([25, 20, 20]), 'upper': np.array([95, 255, 255])}
+            }
+            self.morphology_kernels = {
+                'opening': cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5)),
+                'closing': cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9)),
+                'dilation': cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+            }
+            self.min_area = 80
+            self.max_area_ratio = 0.25
+            self.distance_calibration = {'reference_area': 800, 'reference_distance': 1.0}
+            
+        # Common parameters
+        self.camera_fov = 60  # degrees
+        self.confidence_threshold = 0.7
         
-        for i, val in enumerate(state):
-            val_clipped = np.clip(val, 0.0, 1.0)
-            bin_idx = min(int(val_clipped * bins), bins - 1)
-            discrete_state.append(bin_idx)
+    def detect_green_food(self, camera_frame):
+        """
+        Detect green food objects using dual masking strategy
         
-        return tuple(discrete_state)
-    
-    def get_action(self, state, training=True):
-        """Select action using epsilon-greedy policy"""
-        discrete_state = self._discretize_state(state)
+        Args:
+            camera_frame: BGR image from camera
+            
+        Returns:
+            food_objects: List of detected food objects with position/distance info
+            debug_mask: Binary mask for visualization (optional)
+        """
+        if camera_frame is None or camera_frame.size == 0:
+            return [], np.zeros((480, 640), dtype=np.uint8)
+            
+        # Step 1: Preprocessing
+        preprocessed = self.preprocess_image(camera_frame)
         
-        if training and np.random.random() < self.epsilon:
-            return np.random.randint(self.action_size)
+        # Step 2: Color space conversion
+        hsv = cv2.cvtColor(preprocessed, cv2.COLOR_BGR2HSV)
         
-        if discrete_state not in self.q_table:
-            self.q_table[discrete_state] = np.zeros(self.action_size)
+        # Step 3: Dual masking approach
+        primary_mask = self.create_primary_mask(hsv)
+        backup_mask = self.create_backup_mask(hsv)
         
-        return np.argmax(self.q_table[discrete_state])
-    
-    def update(self, state, action, reward, next_state, done):
-        """Update Q-table using Q-learning update rule"""
-        discrete_state = self._discretize_state(state)
-        discrete_next_state = self._discretize_state(next_state)
+        # Step 4: Mask fusion and cleaning
+        combined_mask = self.fuse_and_clean_masks(primary_mask, backup_mask)
         
-        if discrete_state not in self.q_table:
-            self.q_table[discrete_state] = np.zeros(self.action_size)
-        if discrete_next_state not in self.q_table:
-            self.q_table[discrete_next_state] = np.zeros(self.action_size)
+        # Step 5: Contour detection and filtering
+        food_objects = self.detect_and_filter_contours(combined_mask, camera_frame)
         
-        current_q = self.q_table[discrete_state][action]
-        if done:
-            target_q = reward
+        return food_objects, combined_mask
+        
+    def preprocess_image(self, image):
+        """Preprocess image based on environment type"""
+        if self.environment_type == "hardware":
+            # Hardware: More aggressive preprocessing
+            # Denoise
+            denoised = cv2.bilateralFilter(image, 9, 75, 75)
+            # Enhance contrast
+            lab = cv2.cvtColor(denoised, cv2.COLOR_BGR2LAB)
+            l, a, b = cv2.split(lab)
+            l = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8)).apply(l)
+            enhanced = cv2.merge([l, a, b])
+            return cv2.cvtColor(enhanced, cv2.COLOR_LAB2BGR)
         else:
-            target_q = reward + self.gamma * np.max(self.q_table[discrete_next_state])
-        
-        self.q_table[discrete_state][action] += self.learning_rate * (target_q - current_q)
-        
-        if self.epsilon > self.epsilon_min:
-            self.epsilon *= self.epsilon_decay
-        
-        loss = abs(target_q - current_q)
-        self.training_losses.append(loss)
-    
-    def save_model(self, filepath):
-        """Save Q-table to file"""
-        model_data = {
-            'q_table': self.q_table,
-            'epsilon': self.epsilon,
-            'training_rewards': self.training_rewards,
-            'training_losses': self.training_losses
-        }
-        with open(filepath, 'wb') as f:
-            pickle.dump(model_data, f)
-    
-    def load_model(self, filepath):
-        """Load Q-table from file"""
-        with open(filepath, 'rb') as f:
-            model_data = pickle.load(f)
-        self.q_table = model_data['q_table']
-        self.epsilon = model_data.get('epsilon', self.epsilon_min)
-        self.training_rewards = model_data.get('training_rewards', [])
-        self.training_losses = model_data.get('training_losses', [])
-
-
-class DQNNetwork(nn.Module):
-    """Deep Q-Network architecture"""
-    
-    def __init__(self, state_size: int, action_size: int, hidden_size: int = 256):
-        super(DQNNetwork, self).__init__()
-        self.fc1 = nn.Linear(state_size, hidden_size)
-        self.fc2 = nn.Linear(hidden_size, hidden_size)
-        self.fc3 = nn.Linear(hidden_size, hidden_size // 2)
-        self.fc4 = nn.Linear(hidden_size // 2, action_size)
-        self.dropout = nn.Dropout(0.2)
-    
-    def forward(self, x):
-        x = F.relu(self.fc1(x))
-        x = self.dropout(x)
-        x = F.relu(self.fc2(x))
-        x = self.dropout(x)
-        x = F.relu(self.fc3(x))
-        x = self.fc4(x)  # No activation on output (Q-values can be negative)
-        return x
-
-
-class DQNAgent:
-    """Deep Q-Network agent"""
-    
-    def __init__(self, state_size: int, action_size: int, learning_rate: float = 0.001,
-                 epsilon: float = 1.0, epsilon_decay: float = 0.995, epsilon_min: float = 0.01,
-                 gamma: float = 0.95, memory_size: int = 10000, batch_size: int = 32,
-                 target_update_freq: int = 100):
-        self.state_size = state_size
-        self.action_size = action_size
-        self.epsilon = epsilon
-        self.epsilon_decay = epsilon_decay
-        self.epsilon_min = epsilon_min
-        self.gamma = gamma
-        self.batch_size = batch_size
-        self.target_update_freq = target_update_freq
-        
-        # Neural networks
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.q_network = DQNNetwork(state_size, action_size).to(self.device)
-        self.target_network = DQNNetwork(state_size, action_size).to(self.device)
-        self.optimizer = optim.Adam(self.q_network.parameters(), lr=learning_rate)
-        
-        # Experience replay
-        self.memory = deque(maxlen=memory_size)
-        
-        # Training metrics
-        self.training_rewards = []
-        self.training_losses = []
-        self.update_count = 0
-        
-        # Copy weights to target network
-        self.target_network.load_state_dict(self.q_network.state_dict())
-    
-    def get_action(self, state, training=True):
-        """Select action using epsilon-greedy policy"""
-        if training and np.random.random() < self.epsilon:
-            return np.random.randint(self.action_size)
-        
-        state_tensor = torch.FloatTensor(state).unsqueeze(0).to(self.device)
-        q_values = self.q_network(state_tensor)
-        return q_values.argmax().item()
-    
-    def remember(self, state, action, reward, next_state, done):
-        """Store experience in replay buffer"""
-        self.memory.append(Experience(state, action, reward, next_state, done))
-    
-    def update(self, state, action, reward, next_state, done):
-        """Store experience and train if enough samples"""
-        self.remember(state, action, reward, next_state, done)
-        
-        if len(self.memory) >= self.batch_size:
-            self._train()
-    
-    def _train(self):
-        """Train the network on a batch of experiences"""
-        # Sample batch
-        batch = random.sample(self.memory, self.batch_size)
-        states = torch.FloatTensor([e.state for e in batch]).to(self.device)
-        actions = torch.LongTensor([e.action for e in batch]).to(self.device)
-        rewards = torch.FloatTensor([e.reward for e in batch]).to(self.device)
-        next_states = torch.FloatTensor([e.next_state for e in batch]).to(self.device)
-        dones = torch.BoolTensor([e.done for e in batch]).to(self.device)
-        
-        # Current Q-values
-        current_q_values = self.q_network(states).gather(1, actions.unsqueeze(1))
-        
-        # Target Q-values
-        with torch.no_grad():
-            next_q_values = self.target_network(next_states).max(1)[0]
-            target_q_values = rewards + (self.gamma * next_q_values * ~dones)
-        
-        # Compute loss
-        loss = F.mse_loss(current_q_values.squeeze(), target_q_values)
-        
-        # Optimize
-        self.optimizer.zero_grad()
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.q_network.parameters(), 1.0)
-        self.optimizer.step()
-        
-        # Update target network
-        self.update_count += 1
-        if self.update_count % self.target_update_freq == 0:
-            self.target_network.load_state_dict(self.q_network.state_dict())
-        
-        # Decay epsilon
-        if self.epsilon > self.epsilon_min:
-            self.epsilon *= self.epsilon_decay
-        
-        # Store loss
-        self.training_losses.append(loss.item())
-    
-    def save_model(self, filepath):
-        """Save model to file"""
-        torch.save({
-            'q_network_state_dict': self.q_network.state_dict(),
-            'target_network_state_dict': self.target_network.state_dict(),
-            'optimizer_state_dict': self.optimizer.state_dict(),
-            'epsilon': self.epsilon,
-            'training_rewards': self.training_rewards,
-            'training_losses': self.training_losses
-        }, filepath)
-    
-    def load_model(self, filepath):
-        """Load model from file"""
-        checkpoint = torch.load(filepath, map_location=self.device)
-        self.q_network.load_state_dict(checkpoint['q_network_state_dict'])
-        self.target_network.load_state_dict(checkpoint['target_network_state_dict'])
-        self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-        self.epsilon = checkpoint.get('epsilon', self.epsilon_min)
-        self.training_rewards = checkpoint.get('training_rewards', [])
-        self.training_losses = checkpoint.get('training_losses', [])
-
-
-class PolicyNetwork(nn.Module):
-    """Policy network for REINFORCE"""
-    
-    def __init__(self, state_size: int, action_size: int, hidden_size: int = 256):
-        super(PolicyNetwork, self).__init__()
-        self.fc1 = nn.Linear(state_size, hidden_size)
-        self.fc2 = nn.Linear(hidden_size, hidden_size // 2)
-        self.fc3 = nn.Linear(hidden_size // 2, action_size)
-        self.dropout = nn.Dropout(0.2)
-        
-        # Initialize weights for stability
-        self._init_weights()
-    
-    def _init_weights(self):
-        """Initialize weights using Xavier/Glorot initialization with bias toward exploration"""
-        for m in self.modules():
-            if isinstance(m, nn.Linear):
-                nn.init.xavier_uniform_(m.weight)
-                # Slightly bias the final layer toward forward movement (action 4)
-                if m == self.fc3:
-                    nn.init.constant_(m.bias, 0.1)
-                    # Give slight bias to forward action (now action 4 in 8-action space)
-                    if self.fc3.out_features > 4:  # Ensure action 4 exists
-                        m.bias.data[4] = 0.3
-                else:
-                    nn.init.constant_(m.bias, 0.01)
-    
-    def forward(self, x):
-        # Add input clamping for numerical stability
-        x = torch.clamp(x, -10.0, 10.0)
-        
-        x = F.relu(self.fc1(x))
-        x = self.dropout(x)
-        x = F.relu(self.fc2(x))
-        
-        # Use log_softmax for numerical stability, then exp to get probabilities
-        logits = self.fc3(x)
-        logits = torch.clamp(logits, -10.0, 10.0)  # Prevent extreme values
-        log_probs = F.log_softmax(logits, dim=1)
-        probs = torch.exp(log_probs)
-        
-        return probs
-
-
-class PolicyGradientAgent:
-    """REINFORCE Policy Gradient agent"""
-    
-    def __init__(self, state_size: int, action_size: int, learning_rate: float = 0.001,
-                 gamma: float = 0.95):
-        self.state_size = state_size
-        self.action_size = action_size
-        self.gamma = gamma
-        
-        # Neural network
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.policy_network = PolicyNetwork(state_size, action_size).to(self.device)
-        self.optimizer = optim.Adam(self.policy_network.parameters(), lr=learning_rate)
-        
-        # Episode storage
-        self.episode_states = []
-        self.episode_actions = []
-        self.episode_rewards = []
-        
-        # Training metrics
-        self.training_rewards = []
-        self.training_losses = []
-        
-        # Exploration parameters
-        self.exploration_episodes = 20  # Reduced for faster collision avoidance learning
-        self.current_episode = 0
-        self.min_entropy = 0.1  # Minimum entropy to maintain
-    
-    def get_action(self, state, training=True):
-        """Select action using policy network with improved exploration"""
-        # Ensure state is valid
-        state = np.nan_to_num(state, nan=0.0, posinf=1.0, neginf=0.0)
-        state_tensor = torch.FloatTensor(state).unsqueeze(0).to(self.device)
-        
-        with torch.no_grad() if not training else torch.enable_grad():
-            action_probs = self.policy_network(state_tensor)
+            # Simulation: Minimal preprocessing
+            return cv2.GaussianBlur(image, (3, 3), 0)
             
-            # Add exploration during early training episodes
-            if training and self.current_episode < self.exploration_episodes:
-                # Reduced exploration for faster collision learning
-                epsilon = max(0.05, 0.3 - (self.current_episode / self.exploration_episodes) * 0.25)
-                uniform_probs = torch.ones_like(action_probs) / action_probs.size(1)
-                action_probs = (1 - epsilon) * action_probs + epsilon * uniform_probs
+    def create_primary_mask(self, hsv_image):
+        """Create primary green mask with strict parameters"""
+        lower = self.green_ranges['primary']['lower']
+        upper = self.green_ranges['primary']['upper']
+        return cv2.inRange(hsv_image, lower, upper)
+        
+    def create_backup_mask(self, hsv_image):
+        """Create backup green mask with relaxed parameters"""
+        lower = self.green_ranges['backup']['lower']
+        upper = self.green_ranges['backup']['upper']
+        return cv2.inRange(hsv_image, lower, upper)
+        
+    def fuse_and_clean_masks(self, primary_mask, backup_mask):
+        """Fuse masks and apply morphological operations"""
+        # Combine masks: Primary mask gets priority, backup fills gaps
+        combined = cv2.bitwise_or(primary_mask, backup_mask)
+        
+        # Morphological operations to clean up the mask
+        # Remove small noise
+        cleaned = cv2.morphologyEx(combined, cv2.MORPH_OPEN, self.morphology_kernels['opening'])
+        # Fill gaps in objects
+        cleaned = cv2.morphologyEx(cleaned, cv2.MORPH_CLOSE, self.morphology_kernels['closing'])
+        # Slightly expand to ensure full object coverage
+        cleaned = cv2.morphologyEx(cleaned, cv2.MORPH_DILATE, self.morphology_kernels['dilation'])
+        
+        return cleaned
+        
+    def detect_and_filter_contours(self, mask, original_image):
+        """Detect contours and filter for food-like objects"""
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        food_objects = []
+        height, width = original_image.shape[:2]
+        max_area = height * width * self.max_area_ratio
+        
+        for contour in contours:
+            area = cv2.contourArea(contour)
             
-            # Add small epsilon to prevent zero probabilities
-            action_probs = action_probs + 1e-8
-            action_probs = action_probs / action_probs.sum(dim=1, keepdim=True)
+            # Size filtering
+            if area < self.min_area or area > max_area:
+                continue
+                
+            # Shape filtering
+            x, y, w, h = cv2.boundingRect(contour)
+            aspect_ratio = w / h
             
-            # Check for NaN values
-            if torch.isnan(action_probs).any():
-                print("Warning: NaN detected in action probabilities, using uniform distribution")
-                action_probs = torch.ones_like(action_probs) / action_probs.size(1)
+            # Food boxes should have reasonable aspect ratio
+            if aspect_ratio < 0.3 or aspect_ratio > 3.0:
+                continue
+                
+            # Solidity filtering (reject very irregular shapes)
+            hull = cv2.convexHull(contour)
+            hull_area = cv2.contourArea(hull)
+            solidity = area / hull_area if hull_area > 0 else 0
             
-            # Context-aware action filtering during training to prevent obviously bad actions
-            if training and self.current_episode < 30:  # Apply filtering during early learning
-                # Get sensor values 
-                front_sensors = state[:3]  # Front sensors
-                back_sensors = state[5:8]  # Back sensors
-                min_front_distance = np.min(front_sensors)
-                min_back_distance = np.min(back_sensors)
+            if solidity < 0.6:  # Reject very irregular shapes
+                continue
                 
-                # If front sensors detect close obstacles, reduce probability of forward actions
-                if min_front_distance < 0.2:  # Normalized threshold for close obstacles
-                    action_probs[0][4] *= 0.2  # Forward Slow - reduced but not eliminated
-                    action_probs[0][5] *= 0.1  # Forward Fast - more severely reduced
+            # Edge proximity filtering (avoid partial objects)
+            margin = 15
+            if x < margin or y < margin or x + w > width - margin or y + h > height - margin:
+                continue
                 
-                # If robot is very close to front obstacle, encourage escape actions
-                if min_front_distance < 0.15:  # Very close to front obstacle
-                    # Moderately boost backward and turning actions
-                    action_probs[0][0] *= 2.5  # Backward action - moderate boost
-                    # Boost turning actions to help escape
-                    for turn_action in [1, 2, 3, 6, 7, 8]:
-                        action_probs[0][turn_action] *= 1.5  # Encourage turning when trapped
-                
-                # If back is also blocked, don't over-boost backward
-                if min_back_distance < 0.2:
-                    action_probs[0][0] *= 0.5  # Reduce backward if back is also blocked
-                
-                # Renormalize
-                action_probs = action_probs / action_probs.sum(dim=1, keepdim=True)
-        
-        if training:
-            # Sample from probability distribution
-            try:
-                action_dist = torch.distributions.Categorical(action_probs)
-                action = action_dist.sample()
-                
-                # Debug: Print action probabilities occasionally
-                if self.current_episode % 10 == 0 and len(self.episode_actions) == 0:
-                    print(f"Episode {self.current_episode}: Action probs = {action_probs.detach().cpu().numpy().flatten()[:5]}...")
-                
-                return action.item()
-            except ValueError as e:
-                print(f"Categorical distribution error: {e}")
-                # Fallback to random action
-                return np.random.randint(self.action_size)
-        else:
-            # Take most likely action for evaluation
-            return action_probs.argmax().item()
-    
-    def remember(self, state, action, reward):
-        """Store episode step"""
-        self.episode_states.append(state)
-        self.episode_actions.append(action)
-        self.episode_rewards.append(reward)
-    
-    def update_episode(self):
-        """Update policy at end of episode using REINFORCE"""
-        if len(self.episode_rewards) == 0:
-            return
-        
-        # Increment episode counter
-        self.current_episode += 1
-        
-        # Calculate discounted returns
-        returns = []
-        G = 0
-        for reward in reversed(self.episode_rewards):
-            G = reward + self.gamma * G
-            returns.insert(0, G)
-        
-        # Normalize returns only if there's variation
-        returns = torch.FloatTensor(returns).to(self.device)
-        if len(returns) > 1 and returns.std() > 1e-8:
-            returns = (returns - returns.mean()) / (returns.std() + 1e-8)
-        
-        # Convert episode data to tensors efficiently
-        episode_states_array = np.array(self.episode_states)
-        states = torch.FloatTensor(episode_states_array).to(self.device)
-        actions = torch.LongTensor(self.episode_actions).to(self.device)
-        
-        # Calculate policy loss using proper forward pass
-        with torch.enable_grad():
-            # Get probabilities from forward pass
-            action_probs = self.policy_network(states)
+            # Calculate object properties
+            center_x, center_y = x + w // 2, y + h // 2
+            distance = self.estimate_distance(area)
+            angle = self.calculate_angle(center_x, width)
+            confidence = self.calculate_confidence(contour, area, solidity)
             
-            # Take log of probabilities (with numerical stability)
-            action_probs = torch.clamp(action_probs, min=1e-8, max=1.0)
-            log_probs = torch.log(action_probs)
-            action_log_probs = log_probs.gather(1, actions.unsqueeze(1)).squeeze()
+            food_objects.append({
+                'center': (center_x, center_y),
+                'area': area,
+                'distance': distance,
+                'angle': angle,
+                'confidence': confidence,
+                'bbox': (x, y, w, h)
+            })
             
-            # Calculate loss with entropy bonus for exploration
-            policy_loss = -(action_log_probs * returns).mean()
+        # Sort by confidence (best detections first)
+        food_objects.sort(key=lambda x: x['confidence'], reverse=True)
+        return food_objects
+        
+    def estimate_distance(self, area):
+        """Estimate distance based on object area"""
+        ref_area = self.distance_calibration['reference_area']
+        ref_distance = self.distance_calibration['reference_distance']
+        
+        if area > 0:
+            distance = ref_distance * np.sqrt(ref_area / area)
+            return np.clip(distance, 0.1, 5.0)
+        return 5.0
+        
+    def calculate_angle(self, center_x, image_width):
+        """Calculate angle of food relative to robot center"""
+        image_center = image_width / 2
+        pixel_offset = center_x - image_center
+        angle_per_pixel = self.camera_fov / image_width
+        angle = pixel_offset * angle_per_pixel
+        return np.clip(angle, -30, 30)
+        
+    def calculate_confidence(self, contour, area, solidity):
+        """Calculate detection confidence"""
+        # Base confidence from solidity
+        confidence = solidity
+        
+        # Boost confidence for good size
+        size_factor = min(1.0, area / 500.0)  # Ideal size around 500 pixels
+        confidence *= (0.7 + 0.3 * size_factor)
+        
+        # Boost confidence for good shape
+        x, y, w, h = cv2.boundingRect(contour)
+        aspect_ratio = w / h
+        if 0.7 <= aspect_ratio <= 1.4:  # Square-ish objects
+            confidence *= 1.1
             
-            # Add entropy bonus during early training
-            if self.current_episode < self.exploration_episodes:
-                entropy = -(action_probs * log_probs).sum(dim=1).mean()
-                entropy_bonus = 0.01 * entropy  # Small entropy bonus
-                policy_loss = policy_loss - entropy_bonus
-        
-        # Check for valid loss
-        if torch.isnan(policy_loss) or torch.isinf(policy_loss):
-            print("Warning: Invalid policy loss, skipping update")
-            self.episode_states.clear()
-            self.episode_actions.clear()
-            self.episode_rewards.clear()
-            return
-        
-        # Optimize
-        self.optimizer.zero_grad()
-        policy_loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.policy_network.parameters(), 1.0)
-        self.optimizer.step()
-        
-        # Store metrics
-        episode_reward = sum(self.episode_rewards)
-        self.training_rewards.append(episode_reward)
-        self.training_losses.append(policy_loss.item())
-        
-        # Debug: Print episode info
-        if self.current_episode % 10 == 0:
-            print(f"Episode {self.current_episode}: Reward={episode_reward:.2f}, "
-                  f"Steps={len(self.episode_rewards)}, Loss={policy_loss.item():.4f}")
-        
-        # Clear episode data
-        self.episode_states.clear()
-        self.episode_actions.clear()
-        self.episode_rewards.clear()
-    
-    def update(self, state, action, reward, next_state, done):
-        """Interface compatibility - store step and update if episode done"""
-        self.remember(state, action, reward)
-        if done:
-            self.update_episode()
-    
-    def save_model(self, filepath):
-        """Save model to file"""
-        torch.save({
-            'policy_network_state_dict': self.policy_network.state_dict(),
-            'optimizer_state_dict': self.optimizer.state_dict(),
-            'training_rewards': self.training_rewards,
-            'training_losses': self.training_losses
-        }, filepath)
-    
-    def load_model(self, filepath):
-        """Load model from file"""
-        checkpoint = torch.load(filepath, map_location=self.device)
-        self.policy_network.load_state_dict(checkpoint['policy_network_state_dict'])
-        self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-        self.training_rewards = checkpoint.get('training_rewards', [])
-        self.training_losses = checkpoint.get('training_losses', [])
+        return min(1.0, confidence)
 
 
-class ActorCriticNetwork(nn.Module):
-    """Actor-Critic network with shared features"""
-    
-    def __init__(self, state_size: int, action_size: int, hidden_size: int = 256):
-        super(ActorCriticNetwork, self).__init__()
-        # Shared layers
-        self.shared_fc1 = nn.Linear(state_size, hidden_size)
-        self.shared_fc2 = nn.Linear(hidden_size, hidden_size // 2)
-        
-        # Actor head (policy)
-        self.actor_fc = nn.Linear(hidden_size // 2, action_size)
-        
-        # Critic head (value)
-        self.critic_fc = nn.Linear(hidden_size // 2, 1)
-        
-        self.dropout = nn.Dropout(0.2)
-        
-        # Initialize weights for stability
-        self._init_weights()
-    
-    def _init_weights(self):
-        """Initialize weights using Xavier/Glorot initialization"""
-        for m in self.modules():
-            if isinstance(m, nn.Linear):
-                nn.init.xavier_uniform_(m.weight)
-                nn.init.constant_(m.bias, 0.01)
-    
-    def forward(self, x):
-        # Add input clamping for numerical stability
-        x = torch.clamp(x, -10.0, 10.0)
-        
-        # Shared features
-        x = F.relu(self.shared_fc1(x))
-        x = self.dropout(x)
-        x = F.relu(self.shared_fc2(x))
-        
-        # Actor output (action probabilities)
-        action_logits = self.actor_fc(x)
-        action_logits = torch.clamp(action_logits, -10.0, 10.0)  # Prevent extreme values
-        action_probs = F.softmax(action_logits, dim=1)
-        
-        # Critic output (state value)
-        state_value = self.critic_fc(x)
-        
-        return action_probs, state_value
-
-
-class ActorCriticAgent:
-    """Actor-Critic (A2C) agent"""
-    
-    def __init__(self, state_size: int, action_size: int, learning_rate: float = 0.001,
-                 gamma: float = 0.95, value_loss_coef: float = 0.5, entropy_coef: float = 0.01):
-        self.state_size = state_size
-        self.action_size = action_size
-        self.gamma = gamma
-        self.value_loss_coef = value_loss_coef
-        self.entropy_coef = entropy_coef
-        
-        # Neural network
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.network = ActorCriticNetwork(state_size, action_size).to(self.device)
-        self.optimizer = optim.Adam(self.network.parameters(), lr=learning_rate)
-        
-        # Episode storage
-        self.episode_states = []
-        self.episode_actions = []
-        self.episode_rewards = []
-        self.episode_values = []
-        
-        # Training metrics
-        self.training_rewards = []
-        self.training_losses = []
-    
-    def get_action(self, state, training=True):
-        """Select action using actor-critic policy"""
-        # Ensure state is valid
-        state = np.nan_to_num(state, nan=0.0, posinf=1.0, neginf=0.0)
-        state_tensor = torch.FloatTensor(state).unsqueeze(0).to(self.device)
-        
-        action_probs, state_value = self.network(state_tensor)
-        
-        # Add small epsilon to prevent zero probabilities
-        action_probs = action_probs + 1e-8
-        action_probs = action_probs / action_probs.sum(dim=1, keepdim=True)
-        
-        # Check for NaN values
-        if torch.isnan(action_probs).any():
-            print("Warning: NaN detected in action probabilities, using uniform distribution")
-            action_probs = torch.ones_like(action_probs) / action_probs.size(1)
-        
-        if training:
-            # Sample from probability distribution
-            try:
-                action_dist = torch.distributions.Categorical(action_probs)
-                action = action_dist.sample()
-                
-                # Store value for training
-                self.episode_values.append(state_value.item())
-                
-                return action.item()
-            except ValueError as e:
-                print(f"Categorical distribution error: {e}")
-                # Fallback to random action
-                return np.random.randint(self.action_size)
-        else:
-            # Take most likely action for evaluation
-            return action_probs.argmax().item()
-    
-    def remember(self, state, action, reward):
-        """Store episode step"""
-        self.episode_states.append(state)
-        self.episode_actions.append(action)
-        self.episode_rewards.append(reward)
-    
-    def update_episode(self):
-        """Update both actor and critic at end of episode"""
-        if len(self.episode_rewards) == 0:
-            return
-        
-        # Calculate returns and advantages
-        returns = []
-        G = 0
-        for reward in reversed(self.episode_rewards):
-            G = reward + self.gamma * G
-            returns.insert(0, G)
-        
-        returns = torch.FloatTensor(returns).to(self.device)
-        values = torch.FloatTensor(self.episode_values).to(self.device)
-        
-        # Calculate advantages
-        advantages = returns - values
-        advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
-        
-        # Convert episode data to tensors
-        episode_states_array = np.array(self.episode_states)
-        states = torch.FloatTensor(episode_states_array).to(self.device)
-        actions = torch.LongTensor(self.episode_actions).to(self.device)
-        
-        # Forward pass
-        action_probs, state_values = self.network(states)
-        
-        # Actor loss (policy gradient with advantage)
-        log_probs = torch.log(action_probs.gather(1, actions.unsqueeze(1)).squeeze())
-        actor_loss = -(log_probs * advantages.detach()).mean()
-        
-        # Critic loss (value function)
-        critic_loss = F.mse_loss(state_values.squeeze(), returns)
-        
-        # Entropy bonus for exploration
-        entropy = -(action_probs * torch.log(action_probs + 1e-8)).sum(1).mean()
-        
-        # Total loss
-        total_loss = actor_loss + self.value_loss_coef * critic_loss - self.entropy_coef * entropy
-        
-        # Optimize
-        self.optimizer.zero_grad()
-        total_loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.network.parameters(), 1.0)
-        self.optimizer.step()
-        
-        # Store metrics
-        episode_reward = sum(self.episode_rewards)
-        self.training_rewards.append(episode_reward)
-        self.training_losses.append(total_loss.item())
-        
-        # Clear episode data
-        self.episode_states.clear()
-        self.episode_actions.clear()
-        self.episode_rewards.clear()
-        self.episode_values.clear()
-    
-    def update(self, state, action, reward, next_state, done):
-        """Interface compatibility - store step and update if episode done"""
-        self.remember(state, action, reward)
-        if done:
-            self.update_episode()
-    
-    def save_model(self, filepath):
-        """Save model to file"""
-        torch.save({
-            'network_state_dict': self.network.state_dict(),
-            'optimizer_state_dict': self.optimizer.state_dict(),
-            'training_rewards': self.training_rewards,
-            'training_losses': self.training_losses
-        }, filepath)
-    
-    def load_model(self, filepath):
-        """Load model from file"""
-        checkpoint = torch.load(filepath, map_location=self.device)
-        self.network.load_state_dict(checkpoint['network_state_dict'])
-        self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-        self.training_rewards = checkpoint.get('training_rewards', [])
-        self.training_losses = checkpoint.get('training_losses', [])
-
-
-def create_rl_agent(agent_type: str, state_size: int, action_size: int, **kwargs):
-    """Factory function to create RL agents"""
-    agents = {
-        'qlearning': QLearningAgent,
-        'dqn': DQNAgent,
-        'policy_gradient': PolicyGradientAgent,
-        'actor_critic': ActorCriticAgent
-    }
-    
-    if agent_type not in agents:
-        raise ValueError(f"Unknown agent type: {agent_type}. Available: {list(agents.keys())}")
-    
-    return agents[agent_type](state_size, action_size, **kwargs)
-
-
-def train_rl_agent(rob: IRobobo, agent_type: str = 'qlearning', num_episodes: int = 100, 
-                   max_steps_per_episode: int = 500, save_model: bool = True,
-                   obstacle_threshold: Optional[float] = None):
+def green_food_collection_task2(rob: IRobobo, agent_type: str = 'dqn', mode: str = 'train', 
+                               num_episodes: int = 100):
     """
-    Train RL agent for Task 1 - Obstacle Avoidance
+    Task 2: Green Food Collection using OpenCV + Reinforcement Learning
+    
+    Objective: Collect all 7 green food boxes within 3 minutes using computer vision
+    and reinforcement learning.
     
     Args:
-        rob: Robot interface instance
+        rob: Robot interface (SimulationRobobo or HardwareRobobo)
         agent_type: Type of RL agent ('qlearning', 'dqn', 'policy_gradient', 'actor_critic')
-        num_episodes: Number of training episodes
-        max_steps_per_episode: Maximum steps per episode
-        save_model: Whether to save trained model
-        obstacle_threshold: Optional custom obstacle detection threshold (currently unused)
-    
+        mode: Training mode ('train', 'evaluate', 'train_and_evaluate')
+        num_episodes: Number of episodes to run
+        
     Returns:
-        Trained agent and training metrics
+        Dictionary with training results and metrics
     """
-    # Create environment and agent
-    env = RobotEnvironment(rob, max_steps_per_episode, obstacle_threshold)
-    agent = create_rl_agent(agent_type, env.state_size, env.action_space_size)
     
-    print(f"Starting RL Training: {agent_type.upper()}")
-    print(f"Episodes: {num_episodes}, Max steps per episode: {max_steps_per_episode}")
-    print(f"State size: {env.state_size}, Action size: {env.action_space_size}")
+    print(f"🎯 Starting Task 2: Green Food Collection with {agent_type.upper()}")
+    print("="*50)
     
-    training_metrics = {
+    # Initialize components
+    env_type = "simulation" if isinstance(rob, SimulationRobobo) else "hardware"
+    vision_processor = FoodVisionProcessor(environment_type=env_type)
+    environment = RobotEnvironment(rob, vision_processor)
+    
+    # Initialize DQN agent for Task 2 using factory
+    agent = create_rl_agent('dqn', state_size=13, action_size=9)
+    
+    # Training metrics
+    metrics = {
         'episode_rewards': [],
-        'episode_lengths': [],
-        'average_rewards': [],
-        'collision_rates': []
+        'episode_food_collected': [],
+        'episode_times': [],
+        'episode_steps': [],
+        'success_rate': [],
+        'average_collection_time': []
     }
     
-    for episode in range(num_episodes):
-        state = env.reset()
-        episode_reward = 0
-        episode_length = 0
-        collision_count = 0
-        last_info = {'collision': False}  # Initialize info for scope
-        
-        for step in range(max_steps_per_episode):
-            # Select action
-            action = agent.get_action(state, training=True)
+    successful_episodes = 0
+    success_rate = 0.0
+    action_names = environment.action_descriptions
+    
+    try:
+        for episode in range(num_episodes):
+            state = environment.reset()
+            episode_reward = 0.0
+            episode_steps = 0
+            start_time = time.time()
             
-            # Execute action
-            next_state, reward, done, info = env.step(action)
-            last_info = info  # Store last info
+            print(f"\n📍 Episode {episode + 1}/{num_episodes}")
             
-            # Update agent
-            agent.update(state, action, reward, next_state, done)
+            while True:
+                # Choose action using DQN agent
+                action = agent.get_action(state)
+                
+                # Execute action
+                next_state, reward, done, info = environment.step(action)
+                
+                # Store experience and update agent
+                if mode in ['train', 'train_and_evaluate']:
+                    agent.update(state, action, reward, next_state, done)
+                
+                # Update metrics
+                episode_reward += reward
+                episode_steps += 1
+                
+                # Print progress
+                if episode_steps % 10 == 0:
+                    food_status = f"Food: {environment.food_collected}/7"
+                    time_elapsed = time.time() - start_time
+                    time_status = f"Time: {time_elapsed:.1f}s"
+                    reward_status = f"Reward: {episode_reward:.1f}"
+                    action_status = f"Action: {action_names[action]}"
+                    
+                    print(f"\r  Step {episode_steps:3d} | {food_status} | {time_status} | {reward_status} | {action_status}", 
+                          end='', flush=True)
+                
+                # Check if food was collected
+                if info.get('food_collected', False):
+                    print(f"\n  🟢 Food collected! Total: {environment.food_collected}/7")
+                
+                state = next_state
+                
+                if done:
+                    break
+                    
+            # Episode completed
+            episode_time = time.time() - start_time
             
             # Update metrics
-            episode_reward += reward
-            episode_length += 1
-            if info['collision']:
-                collision_count += 1
+            metrics['episode_rewards'].append(episode_reward)
+            metrics['episode_food_collected'].append(environment.food_collected)
+            metrics['episode_times'].append(episode_time)
+            metrics['episode_steps'].append(episode_steps)
             
-            state = next_state
+            # Success rate
+            if environment.food_collected >= 7:
+                successful_episodes += 1
             
-            if done:
-                break
-        
-        # Store episode metrics
-        training_metrics['episode_rewards'].append(episode_reward)
-        training_metrics['episode_lengths'].append(episode_length)
-        collision_rate = collision_count / episode_length if episode_length > 0 else 0
-        training_metrics['collision_rates'].append(collision_rate)
-        
-        # Calculate running average
-        window_size = min(10, len(training_metrics['episode_rewards']))
-        avg_reward = np.mean(training_metrics['episode_rewards'][-window_size:])
-        training_metrics['average_rewards'].append(avg_reward)
-        
-        # Store episode reward in agent
-        agent.training_rewards.append(episode_reward)
-        
-        # Simple progress reporting every episode
-        action_taken = last_info.get('action_taken', 'Unknown')
-        print(f"Episode {episode+1}/{num_episodes}: Steps={episode_length}, Reward={episode_reward:.2f}, "
-              f"Collisions={collision_count}, Last Action={action_taken}, "
-              f"Done={'Collision' if last_info.get('collision') else 'Max Steps' if episode_length == max_steps_per_episode else 'Stuck' if last_info.get('stuck') else 'Other'}")
-        
-        # Detailed summary every 10 episodes
-        if (episode + 1) % 10 == 0:
-            print(f"\n{'='*60}")
-            print(f"Episodes {episode-8}-{episode+1} Summary:")
-            print(f"  Average Reward (last 10): {avg_reward:.2f}")
-            print(f"  Average Length (last 10): {np.mean(training_metrics['episode_lengths'][-10:]):.1f}")
-            print(f"  Average Collisions (last 10): {np.mean([training_metrics['collision_rates'][i] for i in range(max(0, len(training_metrics['collision_rates'])-10), len(training_metrics['collision_rates']))]):.3f}")
-            if hasattr(agent, 'epsilon'):
-                print(f"  Exploration (ε): {agent.epsilon:.3f}")
-            print(f"{'='*60}\n")
-    
-    print("\n" + "="*60)
-    print("TRAINING COMPLETED")
-    print("="*60)
-    
-    # Save model
-    if save_model:
-        timestamp = int(time.time())
-        model_file = FIGURES_DIR / f"rl_model_{agent_type}_{timestamp}.pth"
-        agent.save_model(model_file)
-        print(f"Model saved to {model_file}")
-        
-        # Save training metrics
-        metrics_file = FIGURES_DIR / f"rl_metrics_{agent_type}_{timestamp}.json"
-        with open(metrics_file, 'w') as f:
-            json.dump(training_metrics, f, indent=2)
-        print(f"Training metrics saved to {metrics_file}")
-    
-    return agent, training_metrics
-
-
-def evaluate_rl_agent(rob: IRobobo, agent, num_episodes: int = 10, max_steps_per_episode: int = 500,
-                       obstacle_threshold: Optional[float] = None):
-    """
-    Evaluate trained RL agent
-    
-    Args:
-        rob: Robot interface instance
-        agent: Trained RL agent
-        num_episodes: Number of evaluation episodes
-        max_steps_per_episode: Maximum steps per episode
-        obstacle_threshold: Optional custom obstacle detection threshold
-    
-    Returns:
-        Evaluation metrics
-    """
-    env = RobotEnvironment(rob, max_steps_per_episode, obstacle_threshold)
-    
-    eval_metrics = {
-        'episode_rewards': [],
-        'episode_lengths': [],
-        'collision_counts': [],
-        'success_rate': 0.0,
-        'average_reward': 0.0,
-        'average_length': 0.0
-    }
-    
-    print(f"Evaluating RL agent for {num_episodes} episodes...")
-    
-    for episode in range(num_episodes):
-        state = env.reset()
-        episode_reward = 0
-        episode_length = 0
-        collision_count = 0
-        
-        for step in range(max_steps_per_episode):
-            # Select action (no exploration)
-            action = agent.get_action(state, training=False)
+            success_rate = successful_episodes / (episode + 1)
+            metrics['success_rate'].append(success_rate)
             
-            # Execute action
-            next_state, reward, done, info = env.step(action)
-            
-            # Update metrics
-            episode_reward += reward
-            episode_length += 1
-            if info['collision']:
-                collision_count += 1
-            
-            state = next_state
-            
-            if done:
-                break
-        
-        # Store episode metrics
-        eval_metrics['episode_rewards'].append(episode_reward)
-        eval_metrics['episode_lengths'].append(episode_length)
-        eval_metrics['collision_counts'].append(collision_count)
-        
-        print(f"Episode {episode + 1}: Reward={episode_reward:.2f}, "
-              f"Length={episode_length}, Collisions={collision_count}")
-    
-    # Calculate summary statistics
-    eval_metrics['average_reward'] = np.mean(eval_metrics['episode_rewards'])
-    eval_metrics['average_length'] = np.mean(eval_metrics['episode_lengths'])
-    eval_metrics['success_rate'] = sum(1 for c in eval_metrics['collision_counts'] if c == 0) / num_episodes
-    
-    print(f"\nEvaluation Results:")
-    print(f"Average Reward: {eval_metrics['average_reward']:.2f}")
-    print(f"Average Episode Length: {eval_metrics['average_length']:.2f}")
-    print(f"Success Rate (no collisions): {eval_metrics['success_rate']:.2%}")
-    print(f"Average Collisions per Episode: {np.mean(eval_metrics['collision_counts']):.2f}")
-    
-    return eval_metrics
-
-
-def rl_obstacle_avoidance_task1(rob: IRobobo, agent_type: str = 'qlearning', 
-                                mode: str = 'train', num_episodes: int = 100,
-                                max_steps_per_episode: int = 500,
-                                model_path: Optional[str] = None,
-                                obstacle_threshold: Optional[float] = None):
-    """
-    Main function for RL-based Task 1 - Obstacle Avoidance
-    
-    Args:
-        rob: Robot interface instance
-        agent_type: Type of RL agent ('qlearning', 'dqn', 'policy_gradient', 'actor_critic')
-        mode: 'train', 'evaluate', or 'train_and_evaluate'
-        num_episodes: Number of episodes
-        max_steps_per_episode: Maximum steps per episode
-        model_path: Path to load/save model
-        obstacle_threshold: Optional custom obstacle detection threshold
-    
-    Returns:
-        Results based on mode
-    """
-    print("="*60)
-    print(f"TASK 1: RL-BASED OBSTACLE AVOIDANCE ({agent_type.upper()})")
-    print("="*60)
-    
-    agent = None
-    training_metrics = None
-    
-    if mode in ['train', 'train_and_evaluate']:
-        # Training phase
-        agent, training_metrics = train_rl_agent(
-            rob, agent_type, num_episodes, max_steps_per_episode, save_model=True,
-            obstacle_threshold=obstacle_threshold
-        )
-        
-        # Plot training progress
-        plot_rl_training_progress(training_metrics, agent_type)
-        
-        if mode == 'train':
-            return agent, training_metrics
-    
-    if mode in ['evaluate', 'train_and_evaluate']:
-        # Load model if provided
-        if model_path and mode == 'evaluate':
-            env = RobotEnvironment(rob, max_steps_per_episode, obstacle_threshold)
-            agent = create_rl_agent(agent_type, env.state_size, env.action_space_size)
-            agent.load_model(model_path)
-            print(f"Loaded model from {model_path}")
-        elif mode == 'train_and_evaluate':
-            # Use the trained agent
-            pass
-        
-        # Evaluation phase
-        if agent is not None:
-            eval_metrics = evaluate_rl_agent(rob, agent, num_episodes=10, max_steps_per_episode=max_steps_per_episode,
-                                           obstacle_threshold=obstacle_threshold)
-            
-            if mode == 'evaluate':
-                return eval_metrics
+            # Average collection time per food
+            if environment.food_collected > 0:
+                avg_time_per_food = episode_time / environment.food_collected
+                metrics['average_collection_time'].append(avg_time_per_food)
             else:
-                return agent, training_metrics, eval_metrics
-        else:
-            print("Error: No agent available for evaluation")
-            return None
+                metrics['average_collection_time'].append(180.0)
+            
+            # Episode summary
+            print(f"\n  ✅ Episode {episode + 1} Complete:")
+            print(f"     Food Collected: {environment.food_collected}/7")
+            print(f"     Episode Time: {episode_time:.1f}s")
+            print(f"     Episode Reward: {episode_reward:.1f}")
+            print(f"     Success Rate: {success_rate:.2%}")
+            
+            # Training - DQN training happens during steps via update() method
+            # No additional episode-end training needed for DQN
+                
+        # Training completed
+        print(f"\n🎉 Task 2 Training Complete!")
+        print(f"Final Success Rate: {success_rate:.2%}")
+        print(f"Average Food Collected: {np.mean(metrics['episode_food_collected']):.1f}/7")
+        
+        # Save model and results
+        if mode in ['train', 'train_and_evaluate']:
+            model_path = FIGURES_DIR / f'task2_dqn_model_{int(time.time())}.pth'
+            agent.save_model(model_path)
+            print(f"Model saved to: {model_path}")
+            
+            # Save metrics
+            metrics_path = FIGURES_DIR / f'task2_metrics_{int(time.time())}.json'
+            with open(metrics_path, 'w') as f:
+                # Convert numpy arrays to lists for JSON serialization
+                json_metrics = {}
+                for key, value in metrics.items():
+                    if isinstance(value, list):
+                        json_metrics[key] = [float(x) for x in value]
+                    else:
+                        json_metrics[key] = float(value)
+                json.dump(json_metrics, f, indent=2)
+            print(f"Metrics saved to: {metrics_path}")
+            
+            # Create training plots
+            plot_task2_training_progress(metrics)
+            
+        return metrics
+        
+    except KeyboardInterrupt:
+        print(f"\n⚠️  Training interrupted by user")
+        return metrics
+    finally:
+        # Ensure robot stops
+        rob.move_blocking(0, 0, 100)
+        if isinstance(rob, SimulationRobobo):
+            rob.stop_simulation()
 
 
-def plot_rl_training_progress(metrics, agent_type):
-    """Plot RL training progress"""
-    fig, axes = plt.subplots(2, 2, figsize=(15, 10))
+def plot_task2_training_progress(metrics):
+    """Create comprehensive plots for Task 2 training progress"""
     
-    # Episode rewards
-    axes[0, 0].plot(metrics['episode_rewards'], alpha=0.7, label='Episode Reward')
-    axes[0, 0].plot(metrics['average_rewards'], label='Average Reward')
-    axes[0, 0].set_title('Training Rewards')
+    fig, axes = plt.subplots(2, 3, figsize=(18, 12))
+    
+    episodes = range(1, len(metrics['episode_rewards']) + 1)
+    
+    # Plot 1: Episode Rewards
+    axes[0, 0].plot(episodes, metrics['episode_rewards'])
+    axes[0, 0].set_title('Episode Rewards')
     axes[0, 0].set_xlabel('Episode')
-    axes[0, 0].set_ylabel('Reward')
-    axes[0, 0].legend()
+    axes[0, 0].set_ylabel('Total Reward')
     axes[0, 0].grid(True)
     
-    # Episode lengths
-    axes[0, 1].plot(metrics['episode_lengths'])
-    axes[0, 1].set_title('Episode Lengths')
+    # Plot 2: Food Collection Progress
+    axes[0, 1].plot(episodes, metrics['episode_food_collected'], 'g-', linewidth=2)
+    axes[0, 1].axhline(y=7, color='r', linestyle='--', label='Target (7 foods)')
+    axes[0, 1].set_title('Food Collection Progress')
     axes[0, 1].set_xlabel('Episode')
-    axes[0, 1].set_ylabel('Steps')
+    axes[0, 1].set_ylabel('Foods Collected')
+    axes[0, 1].set_ylim(0, 8)
+    axes[0, 1].legend()
     axes[0, 1].grid(True)
     
-    # Collision rates
-    axes[1, 0].plot(metrics['collision_rates'])
-    axes[1, 0].set_title('Collision Rates')
+    # Plot 3: Success Rate
+    axes[0, 2].plot(episodes, [x * 100 for x in metrics['success_rate']], 'purple')
+    axes[0, 2].set_title('Success Rate (7/7 Foods)')
+    axes[0, 2].set_xlabel('Episode')
+    axes[0, 2].set_ylabel('Success Rate (%)')
+    axes[0, 2].set_ylim(0, 100)
+    axes[0, 2].grid(True)
+    
+    # Plot 4: Episode Duration
+    axes[1, 0].plot(episodes, metrics['episode_times'], 'orange')
+    axes[1, 0].axhline(y=180, color='r', linestyle='--', label='Time Limit (180s)')
+    axes[1, 0].set_title('Episode Duration')
     axes[1, 0].set_xlabel('Episode')
-    axes[1, 0].set_ylabel('Collision Rate')
+    axes[1, 0].set_ylabel('Time (seconds)')
+    axes[1, 0].legend()
     axes[1, 0].grid(True)
     
-    # Running average reward (longer window)
-    window_size = min(50, len(metrics['episode_rewards']))
-    if len(metrics['episode_rewards']) >= window_size:
+    # Plot 5: Average Collection Time per Food
+    axes[1, 1].plot(episodes, metrics['average_collection_time'], 'brown')
+    axes[1, 1].axhline(y=25.7, color='g', linestyle='--', label='Target (25.7s per food)')
+    axes[1, 1].set_title('Efficiency: Time per Food')
+    axes[1, 1].set_xlabel('Episode')
+    axes[1, 1].set_ylabel('Seconds per Food')
+    axes[1, 1].legend()
+    axes[1, 1].grid(True)
+    
+    # Plot 6: Running Average Reward (last 10 episodes)
+    if len(metrics['episode_rewards']) >= 10:
+        window_size = min(10, len(metrics['episode_rewards']))
         running_avg = []
         for i in range(window_size - 1, len(metrics['episode_rewards'])):
             avg = np.mean(metrics['episode_rewards'][i - window_size + 1:i + 1])
             running_avg.append(avg)
         
-        axes[1, 1].plot(range(window_size - 1, len(metrics['episode_rewards'])), running_avg)
-        axes[1, 1].set_title(f'Running Average Reward (window={window_size})')
-        axes[1, 1].set_xlabel('Episode')
-        axes[1, 1].set_ylabel('Reward')
-        axes[1, 1].grid(True)
+        axes[1, 2].plot(range(window_size - 1, len(metrics['episode_rewards'])), running_avg, 'red')
+        axes[1, 2].set_title(f'Running Average Reward (window={window_size})')
+        axes[1, 2].set_xlabel('Episode')
+        axes[1, 2].set_ylabel('Average Reward')
+        axes[1, 2].grid(True)
     
-    plt.suptitle(f'RL Training Progress - {agent_type.upper()}')
+    plt.suptitle('Task 2: Green Food Collection - Training Progress', fontsize=16)
     plt.tight_layout()
     
     timestamp = int(time.time())
-    plt.savefig(FIGURES_DIR / f'rl_training_{agent_type}_{timestamp}.png')
+    plot_path = FIGURES_DIR / f'task2_training_progress_{timestamp}.png'
+    plt.savefig(plot_path, dpi=300, bbox_inches='tight')
     plt.close()
     
-    print(f"Training progress plot saved to {FIGURES_DIR}")
+    print(f"Training progress plot saved to: {plot_path}")
 
-def test_unified_threshold_system():
-    """
-    Test function to verify the unified threshold system is working correctly.
-    This replaces the old dual-threshold (collision_threshold + near_miss_threshold) 
-    with a single obstacle_threshold where robot gets SURPRISED when obstacle detected.
-    """
-    print("Testing Unified Threshold System")
+
+def test_food_vision_system(rob: IRobobo):
+    """Test the computer vision system for food detection"""
+    
+    print("🔍 Testing Food Vision System")
     print("="*50)
     
-    # Test simulation thresholds
-    print("Simulation Mode:")
-    print(f"  Default obstacle_threshold: 0.15")
-    print(f"  Custom obstacle_threshold: 0.20 (when provided)")
+    env_type = "simulation" if isinstance(rob, SimulationRobobo) else "hardware"
+    vision_processor = FoodVisionProcessor(environment_type=env_type)
     
-    # Test hardware thresholds  
-    print("\nHardware Mode:")
-    print(f"  Default obstacle_threshold: 15")
-    print(f"  Custom obstacle_threshold: 25 (when provided)")
+    print(f"Environment: {env_type}")
+    print(f"Configuration: {vision_processor.green_ranges}")
     
-    # Test obstacle detection logic
-    print("\nObstacle Detection Logic:")
-    print("  if min_front_distance < obstacle_threshold:")
-    print("    obstacle_detected = True")
-    print("    robot.set_emotion(Emotion.SURPRISED)")
-    print("  else:")
-    print("    obstacle_detected = False")
+    if isinstance(rob, SimulationRobobo):
+        rob.play_simulation()
     
-    print("\nState Machine Updates:")
-    print("  - Removed collision_risk levels ('low', 'medium', 'high')")
-    print("  - Replaced with simple obstacle_detected boolean")
-    print("  - Robot gets SURPRISED emotion when obstacle detected")
-    print("  - Unified single threshold replaces dual threshold system")
+    for i in range(10):
+        print(f"\nFrame {i+1}/10:")
+        
+        # Get camera image
+        camera_frame = rob.read_image_front()
+        if camera_frame is None:
+            print("  No camera frame received")
+            continue
+            
+        # Detect food
+        food_objects, debug_mask = vision_processor.detect_green_food(camera_frame)
+        
+        print(f"  Detected {len(food_objects)} food objects")
+        
+        for j, food in enumerate(food_objects):
+            print(f"    Food {j+1}: Distance={food['distance']:.2f}m, "
+                  f"Angle={food['angle']:.1f}°, Confidence={food['confidence']:.2f}")
+        
+        # Save debug images
+        debug_image_path = FIGURES_DIR / f'food_detection_frame_{i+1}.png'
+        cv2.imwrite(str(debug_image_path), camera_frame)
+        
+        mask_image_path = FIGURES_DIR / f'food_mask_frame_{i+1}.png'
+        cv2.imwrite(str(mask_image_path), debug_mask)
+        
+        time.sleep(1)
     
-    print("\nData Collection Updates:")
-    print("  - Replaced 'collision_risk' with 'obstacle_detected' in data")
-    print("  - Updated plotting to show obstacle detection (Yes/No)")
-    print("  - Updated CSV export to use new unified system")
+    print(f"\n✅ Vision test complete. Debug images saved to {FIGURES_DIR}")
     
-    print("\n✅ Unified Threshold System Implementation Complete!")
+    if isinstance(rob, SimulationRobobo):
+        rob.stop_simulation()
+
+
+# ============================================================================
+# MAIN ENTRY POINT AND TESTING FUNCTIONS
+# ============================================================================
+
+def demo_task2_food_collection(rob: IRobobo):
+    """
+    Demo function to show Task 2 capabilities
+    """
+    print("🎯 Task 2 Demo: Green Food Collection")
+    print("="*50)
+    
+    # Test vision system first
+    test_food_vision_system(rob)
+    
+    print("\n🚀 Starting food collection training...")
+    
+    # Run a short training session
+    results = green_food_collection_task2(
+        rob=rob,
+        agent_type='dqn',
+        mode='train_and_evaluate',
+        num_episodes=5  # Short demo
+    )
+    
+    print(f"\n📊 Demo Results:")
+    if results['episode_food_collected']:
+        avg_food = np.mean(results['episode_food_collected'])
+        max_food = max(results['episode_food_collected'])
+        print(f"  Average Food Collected: {avg_food:.1f}/7")
+        print(f"  Best Episode: {max_food}/7 foods")
+        
+    if results['success_rate']:
+        final_success_rate = results['success_rate'][-1]
+        print(f"  Final Success Rate: {final_success_rate:.1%}")
+    
+    return results
+
+
+def test_task2_capabilities(rob: IRobobo):
+    """
+    Test Task 2 capabilities and system components
+    """
+    print("🧪 Task 2 Capability Testing")
+    print("="*50)
+    
+    print("Task 2 - Green Food Collection:")
+    print("  Objective: Collect 7 green food boxes in 3 minutes")
+    print("  Sensors: IR sensors + camera (OpenCV) + orientation")
+    print("  Reward: Food collection + efficiency + approach progress")
+    print("  State Space: 13D (8 IR + 3 vision + 2 orientation)")
+    print("  Actions: 9 discrete actions optimized for collection")
+    
+    print("\nKey Features:")
+    print("  🎯 Goal: Active food collection with time pressure")
+    print("  👁️  Vision: OpenCV green object detection")
+    print("  ⏱️  Time: 180 second episode limit")
+    print("  🎁 Reward: Collection + approach + efficiency bonuses")
+    print("  🧠 Strategy: Target-seeking with obstacle avoidance")
+    
+    print("\n🔧 Testing Vision System...")
+    test_food_vision_system(rob)
+    
+    print(f"\n🔄 Running Task 2 Demo (2 episodes)...")
+    green_food_collection_task2(rob, mode='evaluate', num_episodes=2)
+
+
+if __name__ == "__main__":
+    print("🤖 Robobo Learning Machines - Task 2 Implementation")
+    print("="*60)
+    print("This file implements Task 2: Green Food Collection")
+    print("Key Features:")
+    print("  🎯 OpenCV-based green food detection")
+    print("  🧠 DQN agent for intelligent navigation")
+    print("  📊 Dual masking for simulation/hardware")
+    print("  ⏱️  Time-critical 3-minute collection task")
+    print("  📈 Comprehensive training and evaluation")
+    print("\nMain Functions:")
+    print("  • run_green_food_collection(robot) - Primary entry point")
+    print("  • green_food_collection_task2(robot) - Core training function")
+    print("  • test_food_vision_system(robot) - Vision system testing")
+    print("  • demo_task2_food_collection(robot) - Quick demo")
+    print("\nExample Usage:")
+    print("  from test_actions import run_green_food_collection")
+    print("  results = run_green_food_collection(robot, mode='train', rl_episodes=100)")
