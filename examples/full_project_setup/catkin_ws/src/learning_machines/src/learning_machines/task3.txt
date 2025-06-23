@@ -1,0 +1,4 @@
+Task 3 - Foraging: pushing an object to a location
+Choose between the “easier” and the “harder” environment/task.
+You can use the environment models available at scenes/arena_push_easy.ttt or scenes/arena_push_hard.tttLinks to an external site., but you can also modify them or make your own.
+Your robot should learn to push the red object to the green area as fast as possible.

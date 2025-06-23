@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-RL Controller for Task 1 - Obstacle Avoidance
-Demonstrates all 4 reinforcement learning approaches
+RL Controller for Task 2 - Green Food Collection
+Demonstrates all 4 reinforcement learning approaches for food collection using computer vision
 """
 
 import sys
@@ -9,17 +9,17 @@ import argparse
 from pathlib import Path
 
 from robobo_interface import SimulationRobobo, HardwareRobobo
-from learning_machines import run_all_actions
+from test_actions import green_food_collection_task2
 
 def main():
-    parser = argparse.ArgumentParser(description='RL-based Task 1: Obstacle Avoidance')
+    parser = argparse.ArgumentParser(description='RL-based Task 2: Green Food Collection')
     parser.add_argument('--hardware', action='store_true', help='Run on hardware')
     parser.add_argument('--simulation', action='store_true', help='Run on simulation (default)')
     
     # RL-specific arguments
     parser.add_argument('--rl', action='store_true', help='Use reinforcement learning')
     parser.add_argument('--agent', choices=['qlearning', 'dqn', 'policy_gradient', 'actor_critic'], 
-                        default='qlearning', help='RL agent type')
+                        default='dqn', help='RL agent type (default: dqn)')
     parser.add_argument('--mode', choices=['train', 'evaluate', 'train_and_evaluate'], 
                         default='train', help='RL mode')
     parser.add_argument('--episodes', type=int, default=100, help='Number of episodes')
@@ -51,24 +51,24 @@ def main():
         if args.demo_all:
             # Demo all 4 RL methods with short training
             print("\n" + "="*80)
-            print("DEMO: ALL 4 REINFORCEMENT LEARNING METHODS")
+            print("DEMO: ALL 4 REINFORCEMENT LEARNING METHODS - TASK 2: GREEN FOOD COLLECTION")
             print("="*80)
             
             methods = ['qlearning', 'dqn', 'policy_gradient', 'actor_critic']
             demo_episodes = 20  # Short demo episodes
             
             for i, method in enumerate(methods, 1):
-                print(f"\n[{i}/4] Training {method.upper()} agent...")
+                print(f"\n[{i}/4] Training {method.upper()} agent for food collection...")
                 
                 try:
-                    results = run_all_actions(
+                    results = green_food_collection_task2(
                         rob, 
-                        use_rl=True, 
-                        rl_agent_type=method, 
-                        rl_mode='train_and_evaluate',
-                        rl_episodes=demo_episodes
+                        agent_type=method, 
+                        mode='train',
+                        num_episodes=demo_episodes
                     )
                     print(f"{method.upper()} completed successfully!")
+                    print(f"Results: {results.get('success_rate', 0):.1%} success rate")
                     
                 except Exception as e:
                     print(f"Error training {method}: {e}")
@@ -83,23 +83,24 @@ def main():
             print("="*80)
         
         elif args.rl:
-            # Run single RL method
-            print(f"\nRunning RL-based obstacle avoidance with {args.agent.upper()}")
+            # Run single RL method for food collection
+            print(f"\nRunning RL-based food collection with {args.agent.upper()}")
             
-            results = run_all_actions(
+            results = green_food_collection_task2(
                 rob,
-                use_rl=True,
-                rl_agent_type=args.agent,
-                rl_mode=args.mode,
-                rl_episodes=args.episodes
+                agent_type=args.agent,
+                mode=args.mode,
+                num_episodes=args.episodes
             )
             
             print(f"\nRL training/evaluation completed!")
+            print(f"Final results: {results}")
             
         else:
-            # Run original rule-based approach
-            print("\nRunning rule-based obstacle avoidance")
-            run_all_actions(rob, use_rl=False)
+            # Run demo without RL (basic food collection test)
+            print("\nRunning basic food collection test (no RL)")
+            from test_actions import test_task2_capabilities
+            test_task2_capabilities(rob)
             
     except KeyboardInterrupt:
         print("\nInterrupted by user")

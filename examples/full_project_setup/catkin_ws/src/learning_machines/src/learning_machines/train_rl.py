@@ -6,11 +6,11 @@ This script trains any RL agent (Q-Learning, DQN, Policy Gradient, Actor-Critic)
 for green food collection using computer vision and reinforcement learning.
 
 Usage:
-    python train_rl.py --method dqn --episodes 100 --max-steps 1800
-    python train_rl.py --method qlearning --episodes 200 --max-steps 1800  
-    python train_rl.py --method policy_gradient --episodes 150 --max-steps 1800
-    python train_rl.py --method actor_critic --episodes 100 --max-steps 1800
-    python train_rl.py --method dqn --mode evaluate --load-model model.pth --episodes 10
+    python train_rl.py --simulation --method dqn --episodes 100
+    python train_rl.py --simulation --method qlearning --episodes 200
+    python train_rl.py --simulation --method policy_gradient --episodes 150
+    python train_rl.py --simulation --method actor_critic --episodes 100
+    python train_rl.py --simulation --method dqn --mode evaluate --load-model model.pth --episodes 10
 """
 
 import argparse
@@ -31,22 +31,36 @@ sys.path.append('/root/catkin_ws/src/learning_machines/src')
 from learning_machines.test_actions import (
     SimulationRobobo, 
     HardwareRobobo,
-    green_food_collection_task2
+    green_food_collection_task2,
+    test_task2_capabilities
 )
+from learning_machines.agent_factory import get_default_hyperparameters
 from data_files import FIGURES_DIR
 
 def parse_arguments():
     """Parse command line arguments"""
+    
+    # First pass: get method to determine defaults
+    temp_parser = argparse.ArgumentParser(add_help=False)
+    temp_parser.add_argument('--method', type=str, choices=['qlearning', 'dqn', 'policy_gradient', 'actor_critic'])
+    temp_args, _ = temp_parser.parse_known_args()
+    
+    # Get defaults from agent_factory based on method
+    defaults = {}
+    if temp_args.method:
+        defaults = get_default_hyperparameters(temp_args.method)
+    
+    # Main parser with dynamic defaults
     parser = argparse.ArgumentParser(
         description='Train RL agent for green food collection',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  %(prog)s --method dqn --episodes 100 --max-steps 1800
-  %(prog)s --method qlearning --episodes 200 --max-steps 1800
-  %(prog)s --method policy_gradient --episodes 150 --max-steps 1800
-  %(prog)s --method actor_critic --episodes 100 --max-steps 1800
-  %(prog)s --method dqn --mode evaluate --load-model model.pth --episodes 10
+  %(prog)s --simulation --method dqn --episodes 100
+  %(prog)s --simulation --method qlearning --episodes 200
+  %(prog)s --simulation --method policy_gradient --episodes 150
+  %(prog)s --simulation --method actor_critic --episodes 100
+  %(prog)s --simulation --method dqn --mode evaluate --load-model model.pth --episodes 10
         """
     )
     
@@ -65,10 +79,8 @@ Examples:
     # Training parameters
     parser.add_argument('--episodes', type=int, default=100, 
                        help='Number of training episodes (default: 100)')
-    parser.add_argument('--max-steps', type=int, default=1800,
-                       help='Maximum steps per episode - 3 minutes at 10Hz (default: 1800)')
     parser.add_argument('--mode', type=str, default='train',
-                       choices=['train', 'evaluate', 'train_and_evaluate'],
+                       choices=['train', 'evaluate', 'train_and_evaluate', 'test_capabilities'],
                        help='Training mode (default: train)')
     
     # Model loading/saving
@@ -77,25 +89,29 @@ Examples:
     parser.add_argument('--save-model', type=str, default=None,
                        help='Path to save trained model (default: auto-generated)')
     
-    # Common RL parameters
-    parser.add_argument('--learning-rate', type=float, default=0.001,
-                       help='Learning rate (default: 0.001)')
-    parser.add_argument('--gamma', type=float, default=0.95,
-                       help='Discount factor (default: 0.95)')
-    parser.add_argument('--epsilon', type=float, default=1.0,
-                       help='Initial epsilon for exploration (default: 1.0)')
-    parser.add_argument('--epsilon-decay', type=float, default=0.995,
-                       help='Epsilon decay rate (default: 0.995)')
-    parser.add_argument('--epsilon-min', type=float, default=0.01,
-                       help='Minimum epsilon (default: 0.01)')
+    # Common RL parameters - using agent_factory defaults
+    parser.add_argument('--learning-rate', type=float, default=defaults.get('learning_rate', 0.001),
+                       help=f'Learning rate (default: {defaults.get("learning_rate", 0.001)})')
+    parser.add_argument('--gamma', type=float, default=defaults.get('gamma', 0.95),
+                       help=f'Discount factor (default: {defaults.get("gamma", 0.95)})')
+    parser.add_argument('--epsilon', type=float, default=defaults.get('epsilon', 1.0),
+                       help=f'Initial epsilon for exploration (default: {defaults.get("epsilon", 1.0)})')
+    parser.add_argument('--epsilon-decay', type=float, default=defaults.get('epsilon_decay', 0.995),
+                       help=f'Epsilon decay rate (default: {defaults.get("epsilon_decay", 0.995)})')
+    parser.add_argument('--epsilon-min', type=float, default=defaults.get('epsilon_min', 0.01),
+                       help=f'Minimum epsilon for exploration (default: {defaults.get("epsilon_min", 0.01)})')
     
-    # DQN-specific parameters
-    parser.add_argument('--memory-size', type=int, default=10000,
-                       help='Experience replay buffer size (default: 10000)')
-    parser.add_argument('--batch-size', type=int, default=32,
-                       help='Training batch size for DQN (default: 32)')
-    parser.add_argument('--target-update-freq', type=int, default=100,
-                       help='Target network update frequency (default: 100)')
+    # Hardware/Simulation specific parameters
+    parser.add_argument('--collision-threshold', type=float, default=None,
+                       help='IR sensor collision threshold (default: 0.05 for simulation, 20.0 for hardware)')
+    
+    # DQN-specific parameters - using agent_factory defaults
+    parser.add_argument('--memory-size', type=int, default=defaults.get('memory_size', 10000),
+                       help=f'Experience replay buffer size (default: {defaults.get("memory_size", 10000)})')
+    parser.add_argument('--batch-size', type=int, default=defaults.get('batch_size', 32),
+                       help=f'Training batch size for DQN (default: {defaults.get("batch_size", 32)})')
+    parser.add_argument('--target-update-freq', type=int, default=defaults.get('target_update_freq', 100),
+                       help=f'Target network update frequency (default: {defaults.get("target_update_freq", 100)})')
     
     # Actor-Critic specific parameters
     parser.add_argument('--value-loss-coef', type=float, default=0.5,
@@ -106,6 +122,10 @@ Examples:
     # Model management
     parser.add_argument('--save-freq', type=int, default=50,
                        help='Save model every N episodes (default: 50)')
+    
+    # Optional: Legacy threshold support for testing (NOT recommended)
+    parser.add_argument('--use-thresholds', action='store_true',
+                       help='Use legacy threshold-based detection instead of unified proximity (NOT recommended)')
     
     return parser.parse_args()
 
@@ -128,13 +148,21 @@ def validate_args(args):
 def print_config(args):
     """Print training configuration"""
     print("=" * 80)
-    print(f"RL TRAINING - TASK 1 OBSTACLE AVOIDANCE")
+    print(f"RL TRAINING - TASK 2: GREEN FOOD COLLECTION")
     print("=" * 80)
     print(f"Method: {args.method.upper()}")
     print(f"Platform: {'Simulation (CoppeliaSim)' if args.simulation else 'Hardware Robot'}")
     print(f"Mode: {args.mode}")
     print(f"Episodes: {args.episodes}")
-    print(f"Max steps per episode: {args.max_steps}")
+    print(f"Episode duration: 3 minutes (180 seconds) - Task 2 time limit")
+    
+    # Show collision threshold info
+    if args.collision_threshold is not None:
+        threshold_info = f"Custom: {args.collision_threshold}"
+    else:
+        threshold_info = f"Auto: {0.05 if args.simulation else 20.0} ({'simulation' if args.simulation else 'hardware'} default)"
+    print(f"Collision threshold: {threshold_info}")
+    
     print(f"Results directory: {FIGURES_DIR}")
     print()
     
@@ -179,14 +207,14 @@ def main():
     try:
         # Create robot interface based on platform
         if args.simulation:
-            print("Connecting to CoppeliaSim simulation...")
+            print("Connecting to simulation robot...")
             rob = SimulationRobobo()
             # Wait for connection (simulation doesn't need ROS)
             import time
             time.sleep(2)
         else:
             print("Connecting to hardware robot...")
-            rob = HardwareRobobo()
+            rob = HardwareRobobo(camera=True)
             # Wait for connection
             if use_ros and ROS_AVAILABLE:
                 rospy.sleep(2)
@@ -195,6 +223,12 @@ def main():
                 time.sleep(2)
         
         print("Connected successfully!")
+        
+        # Handle test capabilities mode
+        if args.mode == 'test_capabilities':
+            print(f"\nRunning capability tests on {'simulation' if args.simulation else 'hardware'}...")
+            test_task2_capabilities(rob)
+            return
         
         # Start training
         print(f"\nStarting {args.method.upper()} training for green food collection...")
@@ -207,9 +241,32 @@ def main():
             'num_episodes': args.episodes
         }
         
+        # Set collision threshold based on platform
+        if args.collision_threshold is not None:
+            collision_threshold = args.collision_threshold
+        else:
+            # Auto-detect threshold based on platform
+            collision_threshold = 0.05 if args.simulation else 20.0
+        
+        rl_kwargs['collision_threshold'] = collision_threshold
+        print(f"Using collision threshold: {collision_threshold} ({'simulation' if args.simulation else 'hardware'} default)")
+        
         # Add model path for evaluation mode
         if args.load_model is not None:
-            rl_kwargs['model_path'] = args.load_model
+            # Convert host path to container path if needed
+            model_path = args.load_model
+            original_path = model_path
+            
+            if model_path.startswith('./results/'):
+                # Convert relative host path to absolute container path
+                model_path = model_path.replace('./results/', '/root/results/')
+            elif '/results/figures/' in model_path and not model_path.startswith('/root/'):
+                # Convert absolute host path to container path
+                model_path = model_path.split('/results/figures/')[-1]
+                model_path = f'/root/results/figures/{model_path}'
+                
+            print(f"Model path conversion: {original_path} -> {model_path}")
+            rl_kwargs['model_path'] = model_path
         
         results = green_food_collection_task2(**rl_kwargs)
         
@@ -219,13 +276,12 @@ def main():
         
         if results:
             if args.mode == 'train':
-                agent, metrics = results
-                print_training_summary(metrics, args.method)
+                print_training_summary(results, args.method)
             elif args.mode == 'evaluate':
-                eval_metrics = results
-                print_evaluation_summary(eval_metrics, args.method)
+                print_evaluation_summary(results, args.method)
             elif args.mode == 'train_and_evaluate':
-                agent, training_metrics, eval_metrics = results
+                print_training_summary(results, args.method)
+                # Note: eval metrics would be separate if implemented
                 print_training_summary(training_metrics, args.method)
                 print_evaluation_summary(eval_metrics, args.method)
             
@@ -269,19 +325,26 @@ def print_training_summary(metrics, method):
         avg_time = sum(metrics['episode_times']) / len(metrics['episode_times'])
         print(f"  Average completion time: {avg_time:.1f} seconds")
 
-def print_evaluation_summary(eval_metrics, method):
+def print_evaluation_summary(results, method):
     """Print evaluation statistics summary for food collection"""
     print(f"\nEvaluation Summary ({method.upper()}) - Green Food Collection:")
-    print(f"  Average reward: {eval_metrics['average_reward']:.2f}")
     
-    if 'success_rate' in eval_metrics:
-        print(f"  Success rate (7 foods collected): {eval_metrics['success_rate']:.1%}")
-    if 'average_foods_collected' in eval_metrics:
-        print(f"  Average foods collected: {eval_metrics['average_foods_collected']:.1f}/7")
-    if 'average_completion_time' in eval_metrics:
-        print(f"  Average completion time: {eval_metrics['average_completion_time']:.1f}s")
-    if 'collision_rate' in eval_metrics:
-        print(f"  Collision rate: {eval_metrics['collision_rate']:.1%}")
+    # Handle the results dictionary structure from green_food_collection_task2
+    if 'episode_rewards' in results and results['episode_rewards']:
+        average_reward = sum(results['episode_rewards']) / len(results['episode_rewards'])
+        print(f"  Average reward: {average_reward:.2f}")
+    
+    if 'episode_success_rates' in results and results['episode_success_rates']:
+        success_rate = sum(results['episode_success_rates']) / len(results['episode_success_rates'])
+        print(f"  Success rate (7 foods collected): {success_rate:.1%}")
+    
+    if 'episode_foods_collected' in results and results['episode_foods_collected']:
+        avg_foods = sum(results['episode_foods_collected']) / len(results['episode_foods_collected'])
+        print(f"  Average foods collected: {avg_foods:.1f}/7")
+    
+    if 'episode_lengths' in results and results['episode_lengths']:
+        avg_time = sum(results['episode_lengths']) / len(results['episode_lengths'])
+        print(f"  Average episode length: {avg_time:.1f} steps")
 
 def print_saved_files(method):
     """Print information about saved files"""

@@ -1,0 +1,108 @@
+Training dqn agent for Task 2 (simulation) with arguments: --episodes 1 --collision-threshold 110
+Building Docker image...
+#0 building with "desktop-linux" instance using docker driver
+
+#1 [internal] load build definition from Dockerfile
+#1 transferring dockerfile: 1.88kB done
+#1 DONE 0.0s
+
+#2 [auth] library/ros:pull token for registry-1.docker.io
+#2 DONE 0.0s
+
+#3 [internal] load metadata for docker.io/library/ros:noetic
+#3 DONE 0.9s
+
+#4 [internal] load .dockerignore
+#4 transferring context: 2B done
+#4 DONE 0.0s
+
+#5 [ 1/12] FROM docker.io/library/ros:noetic@sha256:72b8bc59035dc0a5b8e07aae28c16caa84192971d72d207c72ed734fb1d5e97d
+#5 DONE 0.0s
+
+#6 [internal] load build context
+#6 transferring context: 9.80kB 0.0s done
+#6 DONE 0.0s
+
+#7 [11/12] RUN bash -c 'source /opt/ros/noetic/setup.bash && catkin_make'
+#7 CACHED
+
+#8 [ 9/12] COPY ./scripts/setup.bash ./setup.bash
+#8 CACHED
+
+#9 [10/12] RUN find . -type f ( -name '*.py' -o -name '*.bash' ) -exec 'dos2unix' -l -- '{}' ; && apt-get --purge remove -y dos2unix && rm -rf /var/lib/apt/lists/*
+#9 CACHED
+
+#10 [ 2/12] RUN apt-get update -y && apt-get install -y python3 python3-pip git && rm -rf /var/lib/apt/lists/*
+#10 CACHED
+
+#11 [ 6/12] WORKDIR /root/catkin_ws
+#11 CACHED
+
+#12 [ 4/12] COPY ./requirements.txt /requirements.txt
+#12 CACHED
+
+#13 [ 8/12] COPY ./scripts/entrypoint.bash ./entrypoint.bash
+#13 CACHED
+
+#14 [ 5/12] RUN python3 -m pip install -r /requirements.txt && rm /requirements.txt
+#14 CACHED
+
+#15 [ 3/12] RUN apt-get update -y && apt-get install ffmpeg libsm6 libxext6 ros-noetic-opencv-apps dos2unix -y && rm -rf /var/lib/apt/lists/*
+#15 CACHED
+
+#16 [ 7/12] COPY ./catkin_ws .
+#16 CACHED
+
+#17 [12/12] RUN chmod -R u+x /root/catkin_ws/
+#17 CACHED
+
+#18 exporting to image
+#18 exporting layers done
+#18 writing image sha256:35e2fea9ded1382c8b7ef352c9204b9fab48059823348216b66ac7a7b8d89bb5 done
+#18 naming to docker.io/library/learning_machines done
+#18 DONE 0.0s
+
+View build details: docker-desktop://dashboard/build/desktop-linux/desktop-linux/8nu7ui5j9upyyjeqf9tr7v5ca
+Starting Docker container for Task 2: Green Food Collection...
+================================================================================
+RL TRAINING - TASK 2: GREEN FOOD COLLECTION
+================================================================================
+Method: DQN
+Platform: Simulation (CoppeliaSim)
+Mode: train
+Episodes: 1
+Episode duration: 3 minutes (180 seconds) - Task 2 time limit
+Collision threshold: Custom: 110.0
+Results directory: /root/results/figures
+
+Hyperparameters:
+  Learning rate: 0.01
+  Discount factor (gamma): 0.5
+  Initial epsilon: 1.0
+  Epsilon decay: 0.95
+  Minimum epsilon: 0.05
+  Memory size: 50000
+  Batch size: 64
+  Target update frequency: 100
+  Save frequency: 50 episodes
+
+Connecting to simulation robot...
+^C
+
+Training interrupted by user.
+
+Shutting down...
+Traceback (most recent call last):
+  File "/root/catkin_ws/src/learning_machines/scripts/train_rl.py", line 16, in <module>
+    subprocess.run(cmd)
+  File "/usr/lib/python3.8/subprocess.py", line 495, in run
+    stdout, stderr = process.communicate(input, timeout=timeout)
+  File "/usr/lib/python3.8/subprocess.py", line 1020, in communicate
+    self.wait()
+  File "/usr/lib/python3.8/subprocess.py", line 1083, in wait
+    return self._wait(timeout=timeout)
+  File "/usr/lib/python3.8/subprocess.py", line 1806, in _wait
+    (pid, sts) = self._try_wait(0)
+  File "/usr/lib/python3.8/subprocess.py", line 1764, in _try_wait
+    (pid, sts) = os.waitpid(self.pid, wait_flags)
+KeyboardInterrupt

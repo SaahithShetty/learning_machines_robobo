@@ -23,23 +23,21 @@ Experience = namedtuple('Experience', ['state', 'action', 'reward', 'next_state'
 
 
 class DQNNetwork(nn.Module):
-    """Deep Q-Network architecture for Task 2"""
+    """Deep Q-Network architecture matching working reference"""
     
-    def __init__(self, state_size: int, action_size: int, hidden_size: int = 256):
+    def __init__(self, state_size: int, action_size: int, hidden_size: int = 128):
         super(DQNNetwork, self).__init__()
         self.fc1 = nn.Linear(state_size, hidden_size)
         self.fc2 = nn.Linear(hidden_size, hidden_size)
-        self.fc3 = nn.Linear(hidden_size, hidden_size // 2)
-        self.fc4 = nn.Linear(hidden_size // 2, action_size)
-        self.dropout = nn.Dropout(0.2)
+        self.fc3 = nn.Linear(hidden_size, hidden_size)
+        self.fc4 = nn.Linear(hidden_size, action_size)
+        # Remove dropout - reference doesn't use it
     
     def forward(self, x):
         x = F.relu(self.fc1(x))
-        x = self.dropout(x)
         x = F.relu(self.fc2(x))
-        x = self.dropout(x)
         x = F.relu(self.fc3(x))
-        x = self.fc4(x)  # No activation on output (Q-values can be negative)
+        x = self.fc4(x)  # No activation on output
         return x
 
 
@@ -100,11 +98,13 @@ class DQNAgent:
         """Train the network on a batch of experiences"""
         # Sample batch
         batch = random.sample(self.memory, self.batch_size)
-        states = torch.FloatTensor([e.state for e in batch]).to(self.device)
-        actions = torch.LongTensor([e.action for e in batch]).to(self.device)
-        rewards = torch.FloatTensor([e.reward for e in batch]).to(self.device)
-        next_states = torch.FloatTensor([e.next_state for e in batch]).to(self.device)
-        dones = torch.BoolTensor([e.done for e in batch]).to(self.device)
+        
+        # Convert to numpy arrays first, then to tensors for efficiency
+        states = torch.FloatTensor(np.array([e.state for e in batch])).to(self.device)
+        actions = torch.LongTensor(np.array([e.action for e in batch])).to(self.device)
+        rewards = torch.FloatTensor(np.array([e.reward for e in batch])).to(self.device)
+        next_states = torch.FloatTensor(np.array([e.next_state for e in batch])).to(self.device)
+        dones = torch.BoolTensor(np.array([e.done for e in batch])).to(self.device)
         
         # Current Q-values
         current_q_values = self.q_network(states).gather(1, actions.unsqueeze(1))
@@ -134,6 +134,14 @@ class DQNAgent:
         
         # Store loss
         self.training_losses.append(loss.item())
+    
+    def act(self, state, training=True):
+        """Alias for get_action for compatibility"""
+        return self.get_action(state, training)
+    
+    def learn(self, state, action, reward, next_state, done):
+        """Alias for update for compatibility"""
+        return self.update(state, action, reward, next_state, done)
     
     def save_model(self, filepath):
         """Save model to file"""

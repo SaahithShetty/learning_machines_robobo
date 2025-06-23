@@ -1,32 +1,33 @@
 from .test_actions import (
-    run_all_actions, 
-    obstacle_avoidance_task1, 
-    wall_following_algorithm,
+    run_all_actions,
+    green_food_collection_task2,
+    test_task2_capabilities,
+    demo_task2_food_collection,
     # RL components
     RobotEnvironment,
-    QLearningAgent,
-    DQNAgent, 
-    PolicyGradientAgent,
-    ActorCriticAgent,
+    FoodVisionProcessor,
+    # Agent imports from dedicated files
     create_rl_agent,
-    train_rl_agent,
-    evaluate_rl_agent,
-    rl_obstacle_avoidance_task1,
-    plot_rl_training_progress
+    plot_task2_training_progress
 )
 
+# Import agents from their dedicated files
+from .dqn_agent import DQNAgent
+from .qlearning_agent import QLearningAgent  
+from .policy_gradient_agent import PolicyGradientAgent
+from .actor_critic_agent import ActorCriticAgent
+
 __all__ = (
-    "run_all_actions", 
-    "obstacle_avoidance_task1", 
-    "wall_following_algorithm",
+    "run_all_actions",
+    "green_food_collection_task2", 
+    "test_task2_capabilities",
+    "demo_task2_food_collection",
     "RobotEnvironment",
-    "QLearningAgent", 
+    "FoodVisionProcessor",
     "DQNAgent",
-    "PolicyGradientAgent", 
+    "QLearningAgent", 
+    "PolicyGradientAgent",
     "ActorCriticAgent",
     "create_rl_agent",
-    "train_rl_agent", 
-    "evaluate_rl_agent",
-    "rl_obstacle_avoidance_task1",
-    "plot_rl_training_progress"
+    "plot_task2_training_progress"
 )

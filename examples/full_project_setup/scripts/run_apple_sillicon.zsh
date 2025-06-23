@@ -7,36 +7,43 @@ show_usage() {
     echo "Usage: $0 [COMMAND] [OPTIONS]"
     echo ""
     echo "Commands:"
-    echo "  train <method> [args...]     - Train RL agent (simulation)"
-    echo "  train-hw <method> [args...]  - Train RL agent (hardware)"
-    echo "  baseline <method> [args...]  - Run baseline algorithm (simulation)"
-    echo "  baseline-hw <method> [args...] - Run baseline algorithm (hardware)"
+    echo "  train <method> [args...]     - Train RL agent for Task 2 (simulation)"
+    echo "  train-hw <method> [args...]  - Train RL agent for Task 2 (hardware)"
+    echo "  test <method> [args...]      - Test/evaluate RL agent (simulation)"
+    echo "  test-hw <method> [args...]   - Test/evaluate RL agent (hardware)"
+    echo "  task2 [args...]              - Run Task 2 controller directly"
+    echo "  monitor [args...]            - Monitor IR sensors for debugging"
     echo "  run [args...]                - Run custom command"
     echo "  rebuild                      - Force rebuild Docker image"
     echo "  skip-build <command>         - Skip build and run command"
     echo ""
-    echo "RL Training Methods:"
-    echo "  policy_gradient          - Policy Gradient (REINFORCE)"
-    echo "  dqn                      - Deep Q-Network"
+    echo "RL Methods (Task 2: Green Food Collection):"
+    echo "  dqn                      - Deep Q-Network (recommended)"
     echo "  qlearning                - Q-Learning (tabular)"
+    echo "  policy_gradient          - Policy Gradient (REINFORCE)"
     echo "  actor_critic             - Actor-Critic (A2C)"
     echo ""
-    echo "Baseline Methods:"
-    echo "  obstacle_avoidance       - Advanced rule-based obstacle avoidance"
-    echo "  wall_following           - Wall-following algorithm"
+    echo "Examples (Task 2: Green Food Collection):"
+    echo "  $0 train dqn --episodes 100"
+    echo "  $0 train-hw dqn --episodes 50 --mode train_and_evaluate"
+    echo "  $0 test dqn --episodes 10 --load-model /root/results/rl_model_dqn_*.pth"
+    echo "  $0 train qlearning --episodes 200"
+    echo "  $0 train policy_gradient --episodes 150"
+    echo "  $0 train actor_critic --episodes 100"
     echo ""
-    echo "Examples:"
-    echo "  $0 train policy_gradient --episodes 300 --learning-rate 0.0005"
-    echo "  $0 train-hw dqn --episodes 500 --batch-size 64"
-    echo "  $0 baseline obstacle_avoidance --duration 120 --max-distance 10"
-    echo "  $0 baseline-hw wall_following --duration 60 --wall-distance 0.3"
-    echo "  $0 train qlearning --episodes 1000 --epsilon-decay 0.995"
-    echo "  $0 train actor_critic --episodes 400 --gamma 0.99"
+    echo "Advanced options:"
+    echo "  $0 train dqn --episodes 50 --collision-threshold 0.95  # Custom threshold"
+    echo "  $0 train dqn --episodes 50 --use-thresholds  # Legacy threshold mode (NOT recommended)"
     echo ""
-    echo "  $0 run python3 your_script.py"
+    echo "Direct Task 2 access:"
+    echo "  $0 task2 --simulation --method dqn --episodes 50"
+    echo "  $0 monitor --simulation  # Monitor IR sensors"
+    echo ""
+    echo "Custom commands:"
+    echo "  $0 run python3 /root/catkin_ws/src/learning_machines/scripts/learning_robobo_controller.py --simulation --method dqn"
     echo "  $0 run bash"
     echo "  $0 rebuild  # Force rebuild Docker image"
-    echo "  $0 skip-build train policy_gradient --episodes 50  # Skip build for faster testing"
+    echo "  $0 skip-build train dqn --episodes 50  # Skip build for faster testing"
 }
 
 # Check if any arguments provided
@@ -64,13 +71,13 @@ case $COMMAND in
         
         # Validate RL method
         case $METHOD in
-            policy_gradient|dqn|qlearning|actor_critic)
-                echo "Training $METHOD agent (simulation) with arguments: $TRAINING_ARGS"
-                DOCKER_CMD="python3 /root/catkin_ws/src/learning_machines/scripts/train_rl.py --method $METHOD --simulation $TRAINING_ARGS"
+            dqn|qlearning|policy_gradient|actor_critic)
+                echo "Training $METHOD agent for Task 2 (simulation) with arguments: $TRAINING_ARGS"
+                DOCKER_CMD="python3 /root/catkin_ws/src/learning_machines/scripts/train_rl.py --simulation --method $METHOD $TRAINING_ARGS"
                 ;;
             *)
                 echo "Error: Unknown RL method '$METHOD'"
-                echo "Available methods: policy_gradient, dqn, qlearning, actor_critic"
+                echo "Available methods: dqn, qlearning, policy_gradient, actor_critic"
                 exit 1
                 ;;
         esac
@@ -89,20 +96,20 @@ case $COMMAND in
         
         # Validate RL method
         case $METHOD in
-            policy_gradient|dqn|qlearning|actor_critic)
-                echo "Training $METHOD agent (hardware) with arguments: $TRAINING_ARGS"
-                DOCKER_CMD="python3 /root/catkin_ws/src/learning_machines/scripts/train_rl.py --method $METHOD --hardware $TRAINING_ARGS"
+            dqn|qlearning|policy_gradient|actor_critic)
+                echo "Training $METHOD agent for Task 2 (hardware) with arguments: $TRAINING_ARGS"
+                DOCKER_CMD="python3 /root/catkin_ws/src/learning_machines/scripts/train_rl.py --hardware --method $METHOD $TRAINING_ARGS"
                 ;;
             *)
                 echo "Error: Unknown RL method '$METHOD'"
-                echo "Available methods: policy_gradient, dqn, qlearning, actor_critic"
+                echo "Available methods: dqn, qlearning, policy_gradient, actor_critic"
                 exit 1
                 ;;
         esac
         ;;
-    baseline)
+    test)
         if [ $# -eq 0 ]; then
-            echo "Error: No baseline method specified"
+            echo "Error: No RL method specified"
             echo ""
             show_usage
             exit 1
@@ -110,28 +117,24 @@ case $COMMAND in
         
         METHOD=$1
         shift
-        BASELINE_ARGS="$@"
+        TEST_ARGS="$@"
         
-        # Validate baseline method
+        # Validate RL method
         case $METHOD in
-            obstacle_avoidance|wall_following)
-                echo "Running baseline $METHOD algorithm (simulation) with arguments: $BASELINE_ARGS"
-                if [ "$METHOD" = "obstacle_avoidance" ]; then
-                    DOCKER_CMD="python3 /root/catkin_ws/src/learning_machines/scripts/task0_controller.py --simulation --method obstacle_avoidance_task1 $BASELINE_ARGS"
-                else
-                    DOCKER_CMD="python3 /root/catkin_ws/src/learning_machines/scripts/task0_controller.py --simulation --method wall_following_algorithm $BASELINE_ARGS"
-                fi
+            dqn|qlearning|policy_gradient|actor_critic)
+                echo "Testing $METHOD agent for Task 2 (simulation) with arguments: $TEST_ARGS"
+                DOCKER_CMD="python3 /root/catkin_ws/src/learning_machines/scripts/train_rl.py --simulation --method $METHOD --mode evaluate $TEST_ARGS"
                 ;;
             *)
-                echo "Error: Unknown baseline method '$METHOD'"
-                echo "Available methods: obstacle_avoidance, wall_following"
+                echo "Error: Unknown RL method '$METHOD'"
+                echo "Available methods: dqn, qlearning, policy_gradient, actor_critic"
                 exit 1
                 ;;
         esac
         ;;
-    baseline-hw)
+    test-hw)
         if [ $# -eq 0 ]; then
-            echo "Error: No baseline method specified"
+            echo "Error: No RL method specified"
             echo ""
             show_usage
             exit 1
@@ -139,24 +142,32 @@ case $COMMAND in
         
         METHOD=$1
         shift
-        BASELINE_ARGS="$@"
+        TEST_ARGS="$@"
         
-        # Validate baseline method
+        # Validate RL method
         case $METHOD in
-            obstacle_avoidance|wall_following)
-                echo "Running baseline $METHOD algorithm (hardware) with arguments: $BASELINE_ARGS"
-                if [ "$METHOD" = "obstacle_avoidance" ]; then
-                    DOCKER_CMD="python3 /root/catkin_ws/src/learning_machines/scripts/task0_controller.py --hardware --method obstacle_avoidance_task1 $BASELINE_ARGS"
-                else
-                    DOCKER_CMD="python3 /root/catkin_ws/src/learning_machines/scripts/task0_controller.py --hardware --method wall_following_algorithm $BASELINE_ARGS"
-                fi
+            dqn|qlearning|policy_gradient|actor_critic)
+                echo "Testing $METHOD agent for Task 2 (hardware) with arguments: $TEST_ARGS"
+                DOCKER_CMD="python3 /root/catkin_ws/src/learning_machines/scripts/train_rl.py --hardware --method $METHOD --mode evaluate $TEST_ARGS"
                 ;;
             *)
-                echo "Error: Unknown baseline method '$METHOD'"
-                echo "Available methods: obstacle_avoidance, wall_following"
+                echo "Error: Unknown RL method '$METHOD'"
+                echo "Available methods: dqn, qlearning, policy_gradient, actor_critic"
                 exit 1
                 ;;
         esac
+        ;;
+    task2)
+        # Direct access to Task 2 controller
+        TASK2_ARGS="$@"
+        echo "Running Task 2 controller with arguments: $TASK2_ARGS"
+        DOCKER_CMD="python3 /root/catkin_ws/src/learning_machines/scripts/learning_robobo_controller.py $TASK2_ARGS"
+        ;;
+    monitor)
+        # Monitor IR sensors for debugging
+        MONITOR_ARGS="$@"
+        echo "Running IR sensor monitor with arguments: $MONITOR_ARGS"
+        DOCKER_CMD="python3 /root/catkin_ws/src/learning_machines/scripts/monitor_ir_sensors.py $MONITOR_ARGS"
         ;;
     rebuild)
         echo "Force rebuilding Docker image..."
@@ -193,12 +204,12 @@ else
     echo "Skipping build (using existing image)..."
 fi
 
-# Run the container with obstacle environment
-echo "Starting Docker container..."
+# Run the container with Task 2 environment (green food collection)
+echo "Starting Docker container for Task 2: Green Food Collection..."
 docker run -it --rm --platform linux/amd64 \
     -p 45100:45100 -p 45101:45101 \
     -v "$(pwd)/results:/root/results" \
-    -e SCENE_FILE="arena_obstacles.ttt" \
+    -e SCENE_FILE="arena_approach.ttt" \
     learning_machines $DOCKER_CMD
 
 echo ""
