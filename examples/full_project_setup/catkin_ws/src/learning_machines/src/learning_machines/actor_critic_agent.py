@@ -1,4 +1,6 @@
 """
+Actor-Critic Agent for Task 3: Object Pushing
+===============================================
 Actor-Critic Agent for Task 2: Green Food Collection
 ====================================================
 
@@ -19,7 +21,7 @@ from collections import deque
 
 
 class ActorCriticNetwork(nn.Module):
-    """Actor-Critic network with shared features for Task 2"""
+    """Actor-Critic network with shared features for Task 3"""
     
     def __init__(self, state_size: int, action_size: int, hidden_size: int = 256):
         super(ActorCriticNetwork, self).__init__()
@@ -69,7 +71,7 @@ class ActorCriticNetwork(nn.Module):
 
 
 class ActorCriticAgent:
-    """Actor-Critic (A2C) agent for Task 2: Green Food Collection"""
+    """Actor-Critic (A2C) agent for Task 3: Object Pushing"""
     
     def __init__(self, state_size: int, action_size: int, learning_rate: float = 0.001,
                  gamma: float = 0.95, value_loss_coef: float = 0.5, entropy_coef: float = 0.01):

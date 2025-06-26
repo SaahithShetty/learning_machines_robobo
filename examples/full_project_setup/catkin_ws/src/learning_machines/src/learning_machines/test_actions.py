@@ -1,38 +1,53 @@
 """
-Task 2: Green Food Collection - Reinforcement Learning Implementation
-====================================================================
+Task 3: Object Pushing to Target Location - Reinforcement Learning Implementation
+===============================================================================
 
-RECENT CHANGES (Anti-Wall-Collision Update):
-- Removed Stop action from action space (8 actions instead of 9)
-- Removed continuous forward momentum rewards that encouraged wall-hitting
-- Added stronger collision penalties (25+ points) with escalation
-- Added penalties for repetitive action patterns (backward/turn spam)
-- Forward movement only rewarded when food is detected or safe exploration
-- Action indices updated throughout codebase
+TASK 3 IMPLEMENTATION:
+- Robot must push a red object to a green target area as fast as possible
+- Two difficulty levels: arena_push_easy.ttt and arena_push_hard.ttt
+- Focus on object manipulation and spatial reasoning
+- Hybrid reward system: vision for navigation + IR for confirmation
 
-LATEST CHANGES (CV_DQN.py Inspired Simplification):
-- Simplified reward function based on CV_DQN.py approach
-- Removed complex vision-based food detection logic
-- Food collection now uses simulation's get_nr_food_collected() method
-- Simplified collision detection using basic IR sensor thresholds
-- Focus on: food collection (+100), forward movement (+1), green pixel maximization
+SENSOR FUSION APPROACH (Vision + IR):
+- VISION: Used for navigation guidance only
+  * Detects red objects and green targets
+  * Provides distance/angle information for navigation
+  * Guides robot towards objects and targets
+- IR SENSORS: Used for physical confirmation
+  * Front sensors (FrontL, FrontR, FrontC) detect actual contact
+  * Confirm object collection and target reaching
+  * Trigger phase transitions and task completion
 
-This module implements Task 2 for the Robobo robot using reinforcement learning
-and computer vision. The robot must collect 7 green food boxes within 3 minutes
-using DQN (Deep Q-Network) for intelligent navigation and OpenCV for food detection.
+PHASE STRUCTURE:
+- Phase 0: Object Detection (vision-based search for red object)
+- Phase 1: Object Collection (approach and collect using IR sensors)
+- Phase 2: Target Detection (vision-based search and centering for green target)
+- Phase 3: Push to Target (vision guides, IR confirms completion)
+
+RECENT UPDATES (Task 3 Transition):
+- Updated from Task 2 (food collection) to Task 3 (object pushing)
+- Replaced FoodVisionProcessor with ObjectPushVisionProcessor
+- New vision system detects red objects and green target areas
+- Modified reward system for object pushing task
+- Implemented hybrid vision+IR confirmation system
+- Same 8-action space maintained for consistency
+
+This module implements Task 3 for the Robobo robot using reinforcement learning
+and computer vision. The robot must push a red object into a green target area
+using DQN (Deep Q-Network) for intelligent navigation and OpenCV for object/target detection.
 
 Key Components:
-- RobotEnvironment: RL environment wrapper optimized for food collection
-- DQNAgent: Deep Q-Network agent for action selection and learning
-- FoodVisionProcessor: Computer vision system for green food detection
-- Comprehensive reward system balancing collection, exploration, and safety
+- RobotEnvironment: RL environment wrapper optimized for object pushing
+- DQNAgent: Deep Q-Network agent for action selection and learning  
+- ObjectPushVisionProcessor: Computer vision system for red object and green target detection
+- Hybrid sensor fusion: Vision for navigation, IR for confirmation
 
 State Space (11D): [8 IR sensors + 3 vision features]
 Action Space (8D): backward, turns (left/right), forward movements
 Sensor Order: [BackL, BackR, FrontL, FrontR, FrontC, FrontRR, BackC, FrontLL]
 
 Author: Learning Machines Team
-Focus: Task 2 (Green Food Collection) - Obstacle Avoidance (Task 1) removed
+Focus: Task 3 (Object Pushing to Target) - Foraging Task
 """
 
 import cv2
@@ -116,7 +131,7 @@ def print_dynamic_step_info(episode: int, step: int, action: int, reward: float,
         f"Emotion:{emotion.value:10s} | "
         f"MinDist:{min_distance:.3f} | "
         f"EpRwd:{episode_reward:+7.2f} | "
-        f"FoodCol:{info.get('food_collision', False)} | "
+        f"TaskDone:{info.get('task_completed', False)} | "
         f"ObsCol:{info.get('obstacle_collision', False)}"
     )
     
@@ -181,14 +196,14 @@ def test_hardware(rob: HardwareRobobo):
 def run_all_actions(rob: IRobobo, rl_agent_type: str = 'dqn', 
                    rl_mode: str = 'train', rl_episodes: int = 100, 
                    collision_threshold: float = 0.95):
-    """Main function to run Task 2: Green Food Collection
+    """Main function to run Task 3: Object Pushing to Target Location
     
-    This is the primary entry point for running the green food collection task
+    This is the primary entry point for running the object pushing task
     using reinforcement learning and computer vision.
     
     Args:
         rob: Robot interface instance (SimulationRobobo or HardwareRobobo)
-        rl_agent_type: Type of RL agent ('dqn' for Task 2)
+        rl_agent_type: Type of RL agent ('dqn' for Task 3)
         rl_mode: RL mode ('train', 'evaluate', or 'train_and_evaluate')
         rl_episodes: Number of RL episodes to run
         
@@ -199,18 +214,18 @@ def run_all_actions(rob: IRobobo, rl_agent_type: str = 'dqn',
         rob.play_simulation()
     
     rob.set_phone_tilt_blocking(100, 100)
-    rob.set_phone_pan_blocking(180, 50) # Center camera for optimal food detection
+    rob.set_phone_pan_blocking(180, 50) # Center camera for optimal object and target detection
     print("="*50)
-    print(f"TASK 2: GREEN FOOD COLLECTION USING OPENCV + RL ({rl_agent_type.upper()})")
+    print(f"TASK 3: OBJECT PUSHING TO TARGET USING OPENCV + RL ({rl_agent_type.upper()})")
     print("="*50)
     
-    # Run Task 2 - Green Food Collection
-    results = green_food_collection_task2(
+    # Run Task 3 - Object Pushing to Target
+    results = object_pushing_task3(
         rob, agent_type=rl_agent_type, mode=rl_mode, num_episodes=rl_episodes,
         collision_threshold=collision_threshold
     )
     
-    print(f"\nTask 2 completed!")
+    print(f"\nTask 3 completed!")
     if rl_mode in ['train', 'train_and_evaluate']:
         print(f"Models and metrics saved to {FIGURES_DIR}")
     
@@ -221,22 +236,41 @@ def run_all_actions(rob: IRobobo, rl_agent_type: str = 'dqn',
 
 
 class RobotEnvironment:
-    """Environment wrapper for Task 2: Green Food Collection using Reinforcement Learning
+    """Environment wrapper for Task 3: Object Pushing to Target Location using Reinforcement Learning
     
-    This environment is specifically designed for Task 2, which involves:
-    - Detecting and collecting 7 green food boxes within 3 minutes
-    - Using computer vision for food detection and localization
-    - Implementing intelligent navigation with obstacle avoidance
-    - Providing a 11-dimensional state space: [8 IR sensors + 3 vision]
-    - Supporting 9 discrete actions optimized for food collection
+    This environment is specifically designed for Task 3, which involves:
+    - Pushing a red object to a green target area as fast as possible
+    - Using computer vision and IR sensors for object detection and collection
+    - Implementing intelligent navigation and manipulation strategies
+    - Providing a 14-dimensional state space: [8 IR sensors + 6 vision features]
+    - Supporting 8 discrete actions optimized for object pushing
+    
+    Phase Structure (4 phases):
+    - Phase 0: Object Detection (vision-based search for red object)
+    - Phase 1: Object Collection (approach and collect using IR sensors)
+    - Phase 2: Target Detection (search for green target while carrying object)
+    - Phase 3: Push to Target (move object to target location)
     """
     
-    def __init__(self, robot: IRobobo, vision_processor, max_episode_time: int = 180, 
-                 collision_threshold: float = 0.95):
+    def __init__(self, robot: IRobobo, vision_processor, max_episode_time: int = 300, 
+                 collision_threshold: float = 0.95, save_images: bool = False, 
+                 image_save_interval: int = 100):
         self.robot = robot
         self.vision_processor = vision_processor
-        self.max_episode_time = max_episode_time  # 3 minutes for Task 2
+        self.max_episode_time = max_episode_time  # 5 minutes for Task 3
         self.step_count = 0
+        
+        # Image saving configuration
+        self.save_images = save_images
+        self.image_save_interval = image_save_interval  # Save every N steps
+        self.episode_count = 0
+        self.images_saved_this_episode = 0
+        
+        # Create images directory if saving is enabled
+        if self.save_images:
+            self.images_dir = FIGURES_DIR / "training_images"
+            self.images_dir.mkdir(parents=True, exist_ok=True)
+            print(f"Image saving enabled: Every {image_save_interval} steps to {self.images_dir}")
         
         # Detect environment type for proper camera positioning
         self.is_simulation = hasattr(self.robot, '_smartphone_camera')
@@ -244,11 +278,15 @@ class RobotEnvironment:
         print(f"Initializing robot environment for {env_type}")
         
         # Unified collision threshold (same for simulation and hardware)
+        # This single threshold is used for ALL IR sensor collision detection
+        # Can be configured via terminal script: --collision-threshold 0.95
         self.collision_threshold = collision_threshold
         
-        # Action space: Task 2 specific actions optimized for food collection
-        self.action_space_size = 8
-        self.actions = [
+        # Phase-specific action sets
+        self.use_phase_specific_actions = True  # Enable phase-specific actions
+        
+        # Universal action set (original)
+        self.universal_actions = [
             (-50, -50),  # 0: Backward
             (-30, 30),   # 1: Turn Left
             (-15, 30),   # 2: Turn Left Slight
@@ -259,30 +297,95 @@ class RobotEnvironment:
             (30, -30),   # 7: Turn Right
         ]
         
-        # Action descriptions for debugging
-        self.action_descriptions = [
-            "Backward", "Turn Left", "Turn Left Slight", "Forward Left", 
-            "Forward", "Forward Right", "Turn Right Slight", "Turn Right"
-        ]
+        # Phase-specific action sets
+        self.phase_actions = {
+            0: [  # Phase 0: Object Detection - Systematic right turn search only
+                (5, -5),   # 0: Turn Right Very Slight
+                (5, -5),   # 0: Turn Right Very Slight
+                (5, -5),   # 0: Turn Right Very Slight
+                (5, -5),   # 0: Turn Right Very Slight
+                (5, -5),   # 0: Turn Right Very Slight
+                (5, -5),   # 0: Turn Right Very Slight
+                (5, -5),   # 0: Turn Right Very Slight
+                (5, -5),   # 0: Turn Right Very Slight
+            ],
+            1: [  # Phase 1: Object Collection - Forward only when object is detected
+                (60, 60),    # 0: Forward
+                (60, 60),    # 1: Forward
+                (60, 60),    # 2: Forward
+                (60, 60),    # 3: Forward
+                (60, 60),    # 4: Forward
+                (60, 60),    # 5: Forward
+                (60, 60),    # 6: Forward
+                (60, 60),    # 7: Forward
+            ],
+            2: [  # Phase 2: Target Detection - Systematic right turn search only
+                (10, -10),   # 0: Turn Right Slight
+                (10, -10),   # 1: Turn Right Slight
+                (10, -10),   # 2: Turn Right Slight
+                (10, -10),   # 3: Turn Right Slight
+                (10, -10),   # 4: Turn Right Slight
+                (10, -10),   # 5: Turn Right Slight
+                (10, -10),   # 6: Turn Right Slight
+                (10, -10),   # 7: Turn Right Slight
+            ],
+            3: [  # Phase 3: Push to Target - Forward only after alignment
+                (60, 60),    # 0: Forward
+                (60, 60),    # 1: Forward
+                (60, 60),    # 2: Forward
+                (60, 60),    # 3: Forward
+                (60, 60),    # 4: Forward
+                (60, 60),    # 5: Forward
+                (60, 60),    # 6: Forward
+                (60, 60),    # 7: Forward
+            ]
+        }
         
-        # State space: IR sensors (8) + vision data (3) = 11 dimensions
-        # Vision data: [food_detected, food_distance, food_angle]
-        self.state_size = 11
+        # Phase action descriptions
+        self.phase_action_descriptions = {
+            0: ["Turn Right Very Slight", "Turn Right Very Slight", "Turn Right Very Slight", "Turn Right Very Slight", 
+                "Turn Right Very Slight", "Turn Right Very Slight", "Turn Right Very Slight", "Turn Right Very Slight"],
+            1: ["Forward", "Forward", "Forward", "Forward", "Forward", "Forward", "Forward", "Forward"],
+            2: ["Turn Right Slight", "Turn Right Slight", "Turn Right Slight", "Turn Right Slight", 
+                "Turn Right Slight", "Turn Right Slight", "Turn Right Slight", "Turn Right Slight"],
+            3: ["Forward", "Forward", "Forward", "Forward", 
+                "Forward", "Forward", "Forward", "Forward"]
+        }
         
-        # Task 2 specific tracking
-        self.food_collected = 0
-        self.total_food_target = 7
+        # Set initial action space based on phase
+        self.current_phase_num = 0  # Start with phase 0
+        self._update_action_space()
+        
+        # State space: IR sensors (8) + vision data (6) = 14 dimensions
+        # Vision data: [object_detected, object_distance, object_angle, target_detected, target_distance, target_angle]
+        self.state_size = 14
+        
+        # Task 3 specific tracking
+        self.task_completed = False
         self.episode_start_time = None
-        self.last_food_positions = []
+        self.last_object_position = None
+        self.last_target_position = None
         
-        # Collision state tracking (prevent duplicate collection)
+        # Sequential task phases for Task 3 (4 phases)
+        self.current_phase = "OBJECT_DETECTION"  # Phases: OBJECT_DETECTION -> OBJECT_COLLECTION -> TARGET_DETECTION -> PUSH_TO_TARGET -> COMPLETED
+        self.object_collected = False  # Flag for when robot has reached the object
+        
+        # Object-target relationship tracking
+        self.object_target_distance_history = deque(maxlen=10)  # Track object-target proximity
+        
+        # Collision state tracking for object interaction
         self.last_collision_step = -1
-        self.collision_cooldown = 3  # Prevent multiple collections within N steps
+        self.collision_cooldown = 3  # Prevent multiple interactions within N steps
         
         # Action history for temporal learning and grace periods
         self.action_history = deque(maxlen=10)  # Track last 10 actions
         self.reward_history = deque(maxlen=10)  # Track last 10 rewards
         self.grace_period_steps = 3  # Steps to wait before penalizing certain actions
+        
+        # Phase 1 -> Phase 2 transition tracking using raw IR sensors
+        self.front_ir_history = []  # Track ALL front IR distance readings per episode
+        self.phase_transition_threshold_mm = 5.9  # 6mm threshold for object contact
+        self.required_close_readings = 20  # Need 8+ readings below threshold for transition
         
         # Wall collision pattern detection
         self.wall_collision_history = deque(maxlen=5)  # Track recent wall collisions
@@ -297,22 +400,46 @@ class RobotEnvironment:
         # Panoramic scan optimization
         self.scan_frequency = 3  # Scan every N steps to balance speed vs coverage
         self.last_scan_step = 0
-        self.cached_vision_data = {'food_detected': 0.0, 'food_distance': 1.0, 'food_angle': 0.0}
-        
-        # Remove threshold-based obstacle detection - use continuous proximity instead
-        # self.obstacle_threshold removed - now using smooth proximity penalties
-        
-        self.reset()
-    
-    def _initialize_camera(self):
-        """Initialize camera - using default position (no pan/tilt changes)"""
-        try:
-            # Camera starts in default forward-facing position
-            # No pan/tilt adjustments needed - robot starts with camera facing forward
-            print(f"Camera using default position - Pan: {self.robot.read_phone_pan()}, Tilt: {self.robot.read_phone_tilt()}")
-        except Exception as e:
-            print(f"Warning: Could not read camera position: {e}")
+        self.cached_vision_data = {
+            'object_detected': 0.0, 'object_distance': 1.0, 'object_angle': 0.0,
+            'target_detected': 0.0, 'target_distance': 1.0, 'target_angle': 0.0
+        }
 
+        self.reset()
+
+    def _update_action_space(self):
+        """Update action space based on current phase"""
+        if self.use_phase_specific_actions and self.current_phase_num in self.phase_actions:
+            self.actions = self.phase_actions[self.current_phase_num]
+            self.action_space_size = len(self.actions)
+            self.action_descriptions = self.phase_action_descriptions[self.current_phase_num]
+            print(f"Phase {self.current_phase_num}: Updated to {self.action_space_size} actions: {self.action_descriptions}")
+        else:
+            # Fallback to universal actions
+            self.actions = self.universal_actions
+            self.action_space_size = len(self.actions)
+            self.action_descriptions = [
+                "Backward", "Turn Left", "Turn Left Slight", "Forward Left", 
+                "Forward", "Forward Right", "Turn Right Slight", "Turn Right"
+            ]
+
+    def _transition_to_phase(self, new_phase: int, reason: str = ""):
+        """Transition to a new phase and update action space"""
+        if new_phase != self.current_phase_num:
+            old_phase = self.current_phase_num
+            self.current_phase_num = new_phase
+            self.phase_history.append((old_phase, new_phase, self.step_count, reason))
+            self._update_action_space()
+            print(f"Phase transition: {old_phase} -> {new_phase} (Step {self.step_count}): {reason}")
+
+    def get_action_space_size(self):
+        """Get current action space size (for compatibility with RL agents)"""
+        return self.action_space_size
+        
+    def get_current_phase(self):
+        """Get current phase number"""
+        return self.current_phase_num
+    
     def reset(self):
         """Reset environment for new episode"""
         self.step_count = 0
@@ -324,11 +451,22 @@ class RobotEnvironment:
             self.robot.play_simulation()
             time.sleep(1.0)
         
-        # Initialize camera for optimal food detection
+        # Initialize camera for optimal object and target detection
         self._initialize_camera()
         
-        # Reset Task 2 specific counters
-        self.food_collected = 0
+        # Reset Task 3 specific counters
+        self.task_completed = False
+        self.current_phase_num = 0  # Reset to phase 0
+        self.object_collected = False
+        self.target_centered = False
+        self.phase_history = []
+        
+        # Update episode count and reset image counter
+        self.episode_count += 1
+        self.images_saved_this_episode = 0
+        
+        # Update action space for initial phase
+        self._update_action_space()
         
         # Use simulation time for simulator, real time for hardware
         if hasattr(self.robot, 'get_sim_time'):
@@ -341,25 +479,53 @@ class RobotEnvironment:
         # Reset collision state tracking
         self.last_collision_step = -1
         
-        # Sync with simulation's actual food count if available
-        if hasattr(self.robot, 'get_nr_food_collected'):
-            try:
-                sim_food_count = self.robot.get_nr_food_collected()
-                print(f"📊 Simulation food count at reset: {sim_food_count}")
-                self.food_collected = sim_food_count
-            except Exception as e:
-                print(f"⚠️  Could not get simulation food count: {e}")
+        # Reset object-target tracking
+        self.last_object_position = None
+        self.last_target_position = None
+        self.last_target_distance = 1.0  # Initialize for Phase 2 progress tracking
+        self.object_target_distance_history.clear()
+        
+        # Reset IR history for phase transition tracking
+        self.front_ir_history.clear()  # Clear all previous episode readings
+        
+        # Reset Phase 3 task completion tracking
+        self.green_disappearance_count = 0
+        self.last_green_seen_step = 0
         
         # Debug: Check initial state and camera setup
         self._debug_camera_position()
         initial_state = self._get_state()
         ir_raw = self.robot.read_irs()
-        print(f"Reset - IR readings: {ir_raw[:4]}, Food collected: {self.food_collected}")
+        print(f"Reset - IR readings: {ir_raw[:4]}, Task completed: {self.task_completed}")
         
         return initial_state
     
+    def _initialize_camera(self):
+        """Initialize camera - tilt downward to see objects on the ground"""
+        try:
+            # For Task 3 (object pushing), we need the camera to look down at the ground
+            # to detect red objects and green targets
+            print(f"Camera initial position - Pan: {self.robot.read_phone_pan()}, Tilt: {self.robot.read_phone_tilt()}")
+            
+            # Tilt camera downward to see objects on the ground
+            # Negative tilt values point the camera downward
+            target_tilt = 250  # Tilt down 30 degrees to see ground objects
+            self.robot.set_phone_tilt_blocking(target_tilt, 500)  # Move over 0.5 seconds
+            
+            # Small delay to ensure tilt movement completes
+            time.sleep(1.0)
+            
+            # Verify camera position
+            final_pan = self.robot.read_phone_pan()
+            final_tilt = self.robot.read_phone_tilt()
+            print(f"Camera positioned for object detection - Pan: {final_pan}, Tilt: {final_tilt}")
+            
+        except Exception as e:
+            print(f"Warning: Could not set camera position: {e}")
+            print("Continuing with default camera position...")
+
     def _debug_camera_position(self):
-        """Debug camera positioning and food detection"""
+        """Debug camera positioning and object/target detection"""
         try:
             print(f"\n🔍 Camera Debug Info:")
             print(f"  Current Pan: {self.robot.read_phone_pan()}")
@@ -370,57 +536,86 @@ class RobotEnvironment:
             if camera_frame is not None:
                 print(f"  Camera frame size: {camera_frame.shape}")
                 
-                # Test food detection
-                food_objects, _ = self.vision_processor.detect_green_food(camera_frame)
-                print(f"  Food objects detected: {len(food_objects)}")
+                # Test object and target detection
+                red_objects, green_targets, _ = self.vision_processor.detect_objects_and_target(camera_frame)
+                print(f"  Red objects detected: {len(red_objects)}")
+                print(f"  Green targets detected: {len(green_targets)}")
                 
-                for i, food in enumerate(food_objects[:3]):  # Show first 3
-                    print(f"    Food {i+1}: Distance={food['distance']:.3f}, Angle={food['angle']:.1f}°")
+                for i, obj in enumerate(red_objects[:3]):  # Show first 3
+                    print(f"    Red {i+1}: Distance={obj['distance']:.3f}, Angle={obj['angle']:.1f}°")
+                    
+                for i, target in enumerate(green_targets[:3]):  # Show first 3
+                    print(f"    Green {i+1}: Distance={target['distance']:.3f}, Angle={target['angle']:.1f}°")
             else:
                 print("  ❌ No camera frame received!")
                 
         except Exception as e:
             print(f"  Camera debug error: {e}")
 
-    def _sync_food_count_with_simulation(self):
-        """Sync our food counter with the simulation's ground truth"""
-        if hasattr(self.robot, 'get_nr_food_collected'):
+    def _save_camera_image_if_needed(self):
+        """Save camera image if image saving is enabled and it's time to save"""
+        if not self.save_images:
+            return
+            
+        # Save every N steps
+        if self.step_count % self.image_save_interval == 0:
             try:
-                sim_food_count = self.robot.get_nr_food_collected()
-                if sim_food_count != self.food_collected:
-                    print(f"🔄 Food count sync: Python={self.food_collected} → Simulation={sim_food_count}")
-                    old_count = self.food_collected
-                    self.food_collected = sim_food_count
-                    return sim_food_count - old_count  # Return the difference
-                return 0
+                # Get current camera frame
+                camera_frame = self.robot.read_image_front()
+                if camera_frame is not None:
+                    # Create filename with episode, step, and phase info
+                    filename = f"ep{self.episode_count:03d}_step{self.step_count:04d}_phase{self.current_phase_num}.jpg"
+                    filepath = self.images_dir / filename
+                    
+                    # Get vision data for annotation
+                    red_objects, green_targets, processed_frame = self.vision_processor.detect_objects_and_target(camera_frame)
+                    
+                    # Save both original and processed frame
+                    cv2.imwrite(str(filepath), camera_frame)
+                    
+                    # Save processed frame with detections if available
+                    if processed_frame is not None:
+                        processed_filename = f"ep{self.episode_count:03d}_step{self.step_count:04d}_phase{self.current_phase_num}_processed.jpg"
+                        processed_filepath = self.images_dir / processed_filename
+                        cv2.imwrite(str(processed_filepath), processed_frame)
+                    
+                    self.images_saved_this_episode += 1
+                    
+                    # Print info occasionally
+                    if self.step_count <= 10 or self.step_count % (self.image_save_interval * 5) == 0:
+                        print(f"  📸 Saved image: {filename} (Red: {len(red_objects)}, Green: {len(green_targets)})")
+                        
             except Exception as e:
-                print(f"⚠️  Could not sync food count with simulation: {e}")
-                return 0
-        return 0
-
+                print(f"Warning: Could not save camera image: {e}")
+                
     def _get_state(self):
-        """Get current state representation for Task 2: [IR sensors + vision]"""
+        """Get current state representation for Task 3: [IR sensors + vision]"""
         # IR sensors (8 dimensions) - Correct order: [BackL, BackR, FrontL, FrontR, FrontC, FrontRR, BackC, FrontLL]
         ir_values = self.robot.read_irs()
         ir_normalized = []
         for val in ir_values:
             if val is None:
-                ir_normalized.append(0.0)  # No detection
+                ir_normalized.append(1.0)  # No detection = maximum distance
             else:
-                # Unified IR sensor normalization (eliminate reality gap)
-                # Normalize all sensor values to 0-1 range for consistent behavior
-                ir_normalized.append(min(val / 1000.0, 1.0))
+                # FIXED: Proper IR distance calculation
+                # IR values are intensity values, need to convert to distance
+                distance_mm = self.vision_processor._ir_intensity_to_distance(val)
+                # Normalize to [0,1] where 0=very close, 1=far/no detection
+                ir_normalized.append(min(distance_mm / 1000.0, 1.0))
         
-        # Vision data (3 dimensions: food_detected, food_distance, food_angle)
-        # Use panoramic detection for wider field of view (~75° total coverage)
-        # Scans left (-25°), center (0°), right (+25°) to detect food at wider angles
-        vision_data = self._get_panoramic_food_state()
-        food_detected = vision_data[0]  # Binary: food visible
-        food_distance = vision_data[1]  # Normalized distance [0,1]
-        food_angle = vision_data[2]     # Normalized angle [-1,1]
+        # Vision data (6 dimensions: object_detected, object_distance, object_angle, target_detected, target_distance, target_angle)
+        # Use object-target relationship detection for comprehensive spatial awareness
+        vision_data = self._get_object_target_state()
+        object_detected = vision_data[0]    # Binary: red object visible
+        object_distance = vision_data[1]    # Normalized distance [0,1]
+        object_angle = vision_data[2]       # Normalized angle [-1,1]
+        target_detected = vision_data[3]    # Binary: green target visible
+        target_distance = vision_data[4]    # Normalized distance [0,1]
+        target_angle = vision_data[5]       # Normalized angle [-1,1]
         
-        # Combine: 8 IR + 3 vision = 11 dimensions
-        state = np.array(ir_normalized + [food_detected, food_distance, food_angle], 
+        # Combine: 8 IR + 6 vision = 14 dimensions
+        state = np.array(ir_normalized + [object_detected, object_distance, object_angle, 
+                                         target_detected, target_distance, target_angle], 
                         dtype=np.float32)
         return state
     
@@ -438,7 +633,10 @@ class RobotEnvironment:
         miniduration = 300
         # if left_speed == right_speed  and left_speed > 0:
         #     miniduration = 300
-        self.robot.move(left_speed, right_speed, miniduration)
+        self.robot.move_blocking(left_speed, right_speed, miniduration)
+
+        # Save camera image periodically for analysis
+        self._save_camera_image_if_needed()
 
         # Get new state
         next_state = self._get_state()
@@ -448,15 +646,15 @@ class RobotEnvironment:
         
         # Debug: Print reward info occasionally
         if self.step_count <= 10 or self.step_count % 50 == 0:
-            print(f"  Reward: {reward:.2f}, Food collected: {self.food_collected}, Info: {info}")
+            print(f"  Reward: {reward:.2f}, Task completed: {self.task_completed}, Info: {info}")
         
         # Set emotion based on reward and situation
-        if info.get('food_collected', False):
+        if info.get('task_completed', False):
             emotion = Emotion.HAPPY
         elif info.get('obstacle_collision', False):
             emotion = Emotion.SAD
-        elif info.get('food_detected', False):
-            emotion = Emotion.SURPRISED  # Excited about finding food
+        elif info.get('object_detected', False) and info.get('target_detected', False):
+            emotion = Emotion.SURPRISED  # Excited about seeing both object and target
         elif reward > 10.0:
             emotion = Emotion.HAPPY
         elif reward < -5.0:
@@ -467,9 +665,9 @@ class RobotEnvironment:
         # Store emotion and additional info
         info['emotion'] = emotion
         info['action_taken'] = self.action_descriptions[action_idx]
-        info['food_collected_count'] = int(self.food_collected)
+        info['task_completed'] = self.task_completed
         
-        # Check if episode is done - Task 2: Only time limit and food collection target
+        # Check if episode is done - Task 3: Time limit or task completion
         # Use appropriate time measurement based on robot type
         if hasattr(self.robot, 'get_sim_time'):
             # Simulation robot - use simulation time for proper headless speedup
@@ -480,284 +678,436 @@ class RobotEnvironment:
             
         done = (
             time_elapsed >= self.max_episode_time or
-            self.food_collected >= self.total_food_target
+            self.task_completed
         )
         
         # Add episode completion reward/penalty
         if done:
-            if self.food_collected >= self.total_food_target:
-                # Success: All foods collected
+            if self.task_completed:
+                # Success: Object pushed to target
                 time_remaining = max(0, self.max_episode_time - time_elapsed)
                 success_bonus = 500 + (time_remaining / self.max_episode_time) * 200  # Big bonus for success + speed
                 reward += success_bonus
-                print(f"🏆 EPISODE SUCCESS! All {self.total_food_target} foods collected! Bonus: {success_bonus:.1f}")
+                print(f"🏆 EPISODE SUCCESS! Object pushed to target! Bonus: {success_bonus:.1f}")
             elif time_elapsed >= self.max_episode_time:
                 # Failure: Time ran out
                 failure_penalty = -200  # Penalty for not completing in time
                 reward += failure_penalty
-                print(f"⏰ EPISODE TIMEOUT! Only {self.food_collected}/{self.total_food_target} foods collected. Penalty: {failure_penalty}")
+                print(f"⏰ EPISODE TIMEOUT! Task not completed. Penalty: {failure_penalty}")
             
             info['episode_complete'] = True
-            info['success'] = self.food_collected >= self.total_food_target
+            info['success'] = self.task_completed
         
-        # Sync with simulation food count for accurate tracking
-        food_collected_this_step = self._sync_food_count_with_simulation()
-        if food_collected_this_step > 0:
-            info['food_collected'] = True
-            print(f"🎉 FOOD COLLECTED! (Simulation confirmed +{food_collected_this_step})")
+        # Check for task completion
+        task_completed_this_step = self._check_task_completion()
+        if task_completed_this_step:
+            self.task_completed = True
+            info['task_completed'] = True
+            print(f"🎉 TASK COMPLETED! Object successfully pushed to target!")
         
         # Note: The reward calculation in _calculate_reward already handles 
-        # food collection detection and sets info['food_collected']
+        # object pushing progress and sets relevant info
         
         return next_state, reward, done, info
     
     def _calculate_reward(self, action_idx: int, state: np.ndarray) -> Tuple[float, dict]:
-        """ENHANCED FOOD-CENTRIC REWARD FUNCTION
-        
-        IMPROVED REWARD HIERARCHY:
-        ==========================
-        1. LINEAR FOOD COLLECTION: +100 * (1 + food_collected/10) 
-        2. SAFETY COLLISION: -10 (obstacle collision penalty)
-        3. NAVIGATION GUIDANCE: +0.1 to +10.0 max per step
-        4. DISTANCE-BASED FOOD REWARDS: Approach guidance
-        5. AREA COVERAGE: Exploration rewards
-        
-        This provides stronger guidance while maintaining food-centricity.
-        """
+        """Phase-wise reward function for Task 3: Object Pushing to Target"""
         reward = 0.0
         info = {}
         
-        # Extract state components
+        # Basic info setup
         ir_values = list(state[:8])
+        vision_values = list(state[8:])
         
-        # =================================================================
-        # 1. LINEAR FOOD COLLECTION - Major Reward Source
-        # =================================================================
+        # Extract vision data
+        object_detected = vision_values[0]    # Binary: red object visible
+        object_distance = vision_values[1]    # Normalized distance [0,1]
+        object_angle = vision_values[2]       # Normalized angle [-1,1]
+        target_detected = vision_values[3]    # Binary: green target visible
+        target_distance = vision_values[4]    # Normalized distance [0,1]
+        target_angle = vision_values[5]       # Normalized angle [-1,1]
         
-        food_collision_detected = self._check_food_collision()
-        if food_collision_detected:
-            # Linear increase: first food = 100, second = 110, third = 120, etc.
-            linear_bonus = 100 * (1 + self.food_collected * 0.1)
-            reward += linear_bonus
-            info['food_collected'] = True
-            info['linear_food_reward'] = linear_bonus
-            print(f"🎉 FOOD COLLECTED! Linear Reward: +{linear_bonus:.1f} (Food #{self.food_collected})")
-            return reward, info  # Early return - nothing else matters when food is collected
+        # Phase-wise reward calculation
+        if self.current_phase_num == 0:
+            # Phase 0: Object Detection (vision-based search)
+            reward = self._calculate_phase0_reward(action_idx, ir_values, vision_values, info)
+        elif self.current_phase_num == 1:
+            # Phase 1: Object Collection (approach and collect)
+            reward = self._calculate_phase1_reward(action_idx, ir_values, vision_values, info)
+        elif self.current_phase_num == 2:
+            # Phase 2: Target Detection (search for green target)
+            reward = self._calculate_phase2_reward(action_idx, ir_values, vision_values, info)
+        elif self.current_phase_num == 3:
+            # Phase 3: Push to Target (move object to target)
+            reward = self._calculate_phase3_reward(action_idx, ir_values, vision_values, info)
+        else:
+            # Fallback: Basic forward movement reward
+            if action_idx == 4:  # Forward action
+                reward += 1.0
+                info['forward_movement'] = True
         
-        # =================================================================
-        # 2. SAFETY - Obstacle Collision Penalty
-        # =================================================================
-        
-        min_distance = min(ir_values) if ir_values else 1.0
-        if min_distance < 0.1:  # Very close to something
-            # Check if this is an obstacle collision (not food)
-            camera_frame = self.robot.read_image_front()
-            is_food_collision = self._is_colliding_with_food(camera_frame)
-            
-            if not is_food_collision:
-                # Safety collision penalty
-                reward -= 10  
-                info['obstacle_collision'] = True
-                info['collision_penalty'] = -10
-                info['collision_type'] = 'obstacle'
-            else:
-                info['collision_type'] = 'food'  # No penalty for food collisions
-        
-        # =================================================================
-        # 3. ENHANCED NAVIGATION GUIDANCE (Max +10.0 per step)
-        # =================================================================
-        
-        # Get camera frame for vision guidance
-        camera_frame = self.robot.read_image_front()
-        if camera_frame is not None:
-            left_green, middle_green, right_green = self.vision_processor._analyze_green_sections(camera_frame)
-            
-            # Enhanced reward for seeing food (up to 4.0)
-            total_green = left_green + middle_green + right_green
-            green_bonus = min(total_green * 0.15, 4.0)  # Increased scale and cap
-            reward += green_bonus
-            info['green_sight_bonus'] = green_bonus
-            
-            # Enhanced reward for centering food (up to 3.0)
-            if middle_green > max(left_green, right_green) and middle_green > 1.0:
-                center_bonus = min(middle_green * 0.15, 3.0)  # Scale with amount of food in center
-                reward += center_bonus
-                info['center_bonus'] = center_bonus
-            
-            # Direction guidance bonus (up to 2.0)
-            if left_green > right_green + 2.0:  # Food more on left
-                if action_idx in [1, 2, 3]:  # Left turning/forward-left actions
-                    direction_bonus = min(left_green * 0.1, 1.5)
-                    reward += direction_bonus
-                    info['direction_guidance'] = direction_bonus
-            elif right_green > left_green + 2.0:  # Food more on right  
-                if action_idx in [5, 6, 7]:  # Right turning/forward-right actions
-                    direction_bonus = min(right_green * 0.1, 1.5)
-                    reward += direction_bonus
-                    info['direction_guidance'] = direction_bonus
-        
-        # Enhanced forward movement reward (up to 1.0)
-        if action_idx == 4 and camera_frame is not None:  # Forward action
-            left_green, middle_green, right_green = self.vision_processor._analyze_green_sections(camera_frame)
-            if (left_green + middle_green + right_green) > 1.0:  # Only reward forward if food is visible
-                forward_bonus = min((left_green + middle_green + right_green) * 0.08, 1.0)
-                reward += forward_bonus
-                info['forward_toward_food'] = forward_bonus
-        
-        # =================================================================
-        # 4. DISTANCE-BASED FOOD DETECTION AND REWARD
-        # =================================================================
-        
-        distance_reward = self._calculate_distance_based_food_reward(camera_frame)
-        if distance_reward > 0:
-            reward += distance_reward
-            info['distance_food_reward'] = distance_reward
-        
-        # =================================================================
-        # 5. AREA COVERAGE REWARDS FOR EXPLORATION
-        # =================================================================
-        
-        exploration_reward = self._calculate_exploration_reward()
-        if exploration_reward > 0:
-            reward += exploration_reward
-            info['exploration_reward'] = exploration_reward
-        
-        # =================================================================
-        # 6. PREVENT DESTRUCTIVE BEHAVIORS (Minimal penalties)
-        # =================================================================
-        
-        # Track repetitive actions (prevent getting stuck)
-        if not hasattr(self, 'action_history'):
-            self.action_history = deque(maxlen=8)  # Longer history for better detection
-        self.action_history.append(action_idx)
-        
-        if len(self.action_history) >= 6:
-            recent_actions = list(self.action_history)[-6:]
-            current_action_count = recent_actions.count(action_idx)
-            
-            # Penalize excessive repetition (5+ times in last 6 actions) - more lenient
-            if current_action_count >= 5:
-                if action_idx == 0:  # Backward spam
-                    reward -= 5  # Reduced penalty but still significant
-                    info['backward_spam_penalty'] = -5
-                    print("🔄 BACKWARD SPAM: -5")
-                elif action_idx in [1, 2, 6, 7]:  # Turn spam
-                    reward -= 3  # Reduced penalty
-                    info['turn_spam_penalty'] = -3
-                    print("🔄 TURN SPAM: -3")
-        
-        # Store state info
-        info['ir_sensors'] = ir_values
-        info['action_taken'] = action_idx
-        info['min_distance'] = min_distance
+        # Store basic info
+        info['phase'] = self.current_phase_num
+        info['action_description'] = self.action_descriptions[action_idx]
+        info['object_detected'] = object_detected > 0.5
+        info['target_detected'] = target_detected > 0.5
         
         return reward, info
+
+    def _calculate_phase0_reward(self, action_idx, ir_values, vision_values, info):
+        """Phase 0: Object Detection - Vision-based search for red object, fallback to front IR if not visible"""
+        reward = 0.0
+        # Extract vision data
+        object_detected = vision_values[0]    # Binary: red object visible
+        object_distance = vision_values[1]    # Normalized distance [0,1]
+        object_angle = vision_values[2]       # Normalized angle [-1,1]
+        # Extract front center IR sensor only
+        front_center_ir = ir_values[4]  # FrontC only
         
-    def _calculate_distance_based_food_reward(self, camera_frame) -> float:
-        """Calculate reward based on distance to detected food
+        # Debug output for Phase 0 vision detection issues
+        if self.step_count <= 20 or self.step_count % 10 == 0:
+            print(f"  Phase 0 Debug - Vision: detected={object_detected:.3f}, angle={object_angle:.3f}, distance={object_distance:.3f}, FrontC_IR={front_center_ir:.6f}")
+            
+            # Save debug image every few steps in Phase 0
+            try:
+                camera_frame = self.robot.read_image_front()
+                if camera_frame is not None and self.save_images:
+                    # Force save image for debugging vision issues
+                    filename = f"DEBUG_phase0_step{self.step_count}_vision{object_detected:.1f}_angle{object_angle:.2f}.jpg"
+                    filepath = self.images_dir / filename
+                    
+                    # Get processed frame with detections
+                    red_objects, green_targets, processed_frame = self.vision_processor.detect_objects_and_target(camera_frame)
+                    
+                    # Save both original and processed
+                    import cv2
+                    cv2.imwrite(str(filepath), camera_frame)
+                    if processed_frame is not None:
+                        processed_filepath = self.images_dir / f"DEBUG_phase0_step{self.step_count}_PROCESSED.jpg"
+                        cv2.imwrite(str(processed_filepath), processed_frame)
+                    
+                    print(f"    DEBUG: Saved images - Raw objects: {len(red_objects)}, Raw targets: {len(green_targets)}")
+            except Exception as e:
+                print(f"    DEBUG: Image save failed: {e}")
         
-        Returns higher rewards for getting closer to food objects.
-        This provides navigation guidance toward food.
-        """
-        if camera_frame is None:
-            return 0.0
-        
-        try:
-            # Detect food objects with distance information
-            food_objects, _ = self.vision_processor.detect_green_food(camera_frame)
+        # 1. Vision-Based Detection
+        if object_detected > 0.5:
+            reward += 10.0  # Base reward for vision detection
+            abs_angle = abs(object_angle)
+            if abs_angle <= 0.20:
+                reward += 10.0  # Centered
+            elif abs_angle <= 0.66:
+                reward += 3.0   # Side
+            distance_reward = (1.0 - object_distance) * 5.0
+            reward += distance_reward
+            info['object_in_view'] = True
             
-            if not food_objects:
-                return 0.0
+            # DEBUG: Save image when red object is detected
+            try:
+                camera_frame = self.robot.read_image_front()
+                if camera_frame is not None and hasattr(self, 'images_dir'):
+                    # Save original camera frame
+                    debug_filename = f"DEBUG_PHASE0_DETECTION_step{self.step_count}_obj{object_detected:.2f}_angle{object_angle:.3f}_dist{object_distance:.3f}.jpg"
+                    debug_filepath = self.images_dir / debug_filename
+                    cv2.imwrite(str(debug_filepath), camera_frame)
+                    
+                    # Save processed frame with detection overlay
+                    red_objects, green_targets, processed_frame = self.vision_processor.detect_objects_and_target(camera_frame)
+                    if processed_frame is not None:
+                        processed_filename = f"DEBUG_PHASE0_PROCESSED_step{self.step_count}_redboxes{len(red_objects)}.jpg"
+                        processed_filepath = self.images_dir / processed_filename
+                        cv2.imwrite(str(processed_filepath), processed_frame)
+                    
+                    print(f"🔍 DEBUG: Red object detected! Saved images: {debug_filename}")
+                    print(f"    Object data: detected={object_detected:.3f}, angle={object_angle:.3f}, distance={object_distance:.3f}")
+                    print(f"    Raw detections: {len(red_objects)} red objects, {len(green_targets)} green targets")
+            except Exception as e:
+                print(f"DEBUG: Failed to save detection image: {e}")
             
-            # Find closest food object
-            closest_food = min(food_objects, key=lambda f: f['distance'])
-            distance = closest_food['distance']
-            angle = abs(closest_food['angle'])
-            
-            # Enhanced distance-based reward: closer = higher reward
-            # Scale: distance 0.0-1.0 maps to reward 3.0-0.0 (increased from 2.0)
-            distance_reward = max(0.0, 3.0 * (1.0 - distance))
-            
-            # Angle bonus: facing food directly gives extra reward
-            if angle < 10:  # Within 10 degrees (more strict)
-                distance_reward *= 2.0  # 100% bonus for excellent alignment
-            elif angle < 20:  # Within 20 degrees  
-                distance_reward *= 1.5  # 50% bonus for good alignment
-            elif angle < 40:  # Within 40 degrees
-                distance_reward *= 1.2  # 20% bonus for reasonable alignment
-            
-            # Progressive approach bonus - extra reward for very close food
-            if distance < 0.3:  # Very close
-                proximity_bonus = (0.3 - distance) * 5.0  # Up to 1.5 bonus
-                distance_reward += proximity_bonus
-            
-            return min(distance_reward, 5.0)  # Cap at 5.0 (increased from 3.0)
-            
-        except Exception as e:
-            print(f"Error calculating distance-based food reward: {e}")
-            return 0.0
-    
-    def _calculate_exploration_reward(self) -> float:
-        """Calculate reward for area coverage and exploration
-        
-        Encourages the robot to explore different areas rather than
-        getting stuck in one location. Tracks visited positions.
-        """
-        try:
-            # Initialize exploration tracking if needed
-            if not hasattr(self, 'visited_positions'):
-                self.visited_positions = set()
-                self.last_position = None
-                self.exploration_grid_size = 0.15  # Smaller grid for finer coverage tracking
-                self.steps_since_exploration = 0
-            
-            # Get current position (estimated from IR sensors and movement)
-            current_pos = self._estimate_current_position()
-            
-            if current_pos is None:
-                return 0.0
-            
-            # Discretize position to grid
-            grid_x = int(current_pos[0] / self.exploration_grid_size)
-            grid_y = int(current_pos[1] / self.exploration_grid_size)
-            grid_pos = (grid_x, grid_y)
-            
-            # Check if this is a new area
-            if grid_pos not in self.visited_positions:
-                self.visited_positions.add(grid_pos)
-                self.steps_since_exploration = 0
+            # Transition if well centered and close enough
+            if abs_angle <= 0.17 and object_distance <= 0.5:
+                info['phase_transition_ready'] = True
+                self._transition_to_phase(1, f"Object detected and positioned (angle={object_angle:.3f}, distance={object_distance:.3f}) - ready for collection")
+            # Early transition if very well centered (prevent overshooting)
+            elif abs_angle <= 0.15:
+                info['phase_transition_ready'] = True
+                self._transition_to_phase(1, f"Object well centered (angle={object_angle:.3f}) - transition to prevent overshooting")
+        else:
+            info['object_in_view'] = False
+            # 2. IR-Based Detection (if not visible in camera) - Use only FrontC sensor
+            if front_center_ir < 0.02:  # IR triggered, possible object
+                reward += 4.0
+                info['object_detected_by_ir'] = True
                 
-                # Enhanced reward for discovering new area
-                exploration_reward = 2.0  # Increased from 1.0
-                
-                # Progressive bonus for covering more area overall
-                coverage_bonus = min(len(self.visited_positions) * 0.15, 2.0)  # Increased scale
-                total_reward = exploration_reward + coverage_bonus
-                
-                return min(total_reward, 3.0)  # Cap at 3.0 (increased from 2.0)
+                # Transition to Phase 1 if object detected by IR sensors
+                # This handles cases where object is close but not visible in camera
+                if front_center_ir < 0.02:  # Object very close via IR (20mm)
+                    info['phase_transition_ready'] = True
+                    self._transition_to_phase(1, f"Object detected by FrontC IR sensor (FrontC_IR={front_center_ir:.3f}) - ready for collection")
             else:
-                # Track time since last exploration
-                self.steps_since_exploration += 1
+                info['object_detected_by_ir'] = False
+        # Encourage systematic exploration if nothing detected
+        if not info['object_in_view'] and not info['object_detected_by_ir']:
+            # All actions in Phase 0 are right turns, so encourage systematic scanning
+            reward += 2.0  # Base turning reward for systematic search
+        else:
+            # If object detected, discourage continued turning to prevent overshooting
+            # Give smaller reward to encourage stopping when object is well positioned
+            if info['object_in_view'] and abs(object_angle) <= 0.2:
+                reward += 1.0  # Small reward to encourage stopping when well positioned
+            else:
+                reward += 2.0  # Normal turning reward
+        info['object_angle'] = object_angle
+        info['object_distance'] = object_distance
+        info['front_center_ir'] = front_center_ir
+        return reward
+
+    def _calculate_phase1_reward(self, action_idx, ir_values, vision_values, info):
+        """Phase 1: Object Collection - Move straight, use raw IR history for robust transition"""
+        reward = 0.0
+        
+        # Get raw IR values directly from robot
+        raw_ir_values = self.robot.read_irs()
+        front_center_ir_intensity = raw_ir_values[4]  # Raw intensity from FrontC sensor
+        
+        # Convert raw IR intensity to actual distance
+        front_center_distance_mm = self.vision_processor._ir_intensity_to_distance(front_center_ir_intensity)
+        
+        # Add current distance reading to history (collect ALL readings per episode)
+        self.front_ir_history.append(front_center_distance_mm)
+        
+        # Count readings below 6mm threshold
+        close_readings_count = sum(1 for distance in self.front_ir_history if distance <= self.phase_transition_threshold_mm)
+        
+        # Debug output for Phase 1 collection issues
+        if self.step_count <= 20 or self.step_count % 10 == 0:
+            print(f"  Phase 1 Debug - Distance={front_center_distance_mm:.1f}mm, Raw_IR={front_center_ir_intensity:.6f}")
+            print(f"  Phase 1 Debug - Close_readings={close_readings_count}/{len(self.front_ir_history)}, Need={self.required_close_readings} for transition")
+        
+        # Reward for moving forward (all actions in Phase 1 are forward)
+        if action_idx in [0,1,2,3,4,5,6,7]:
+            reward += 5.0
+        
+        # Progressive reward for getting closer to object
+        if front_center_distance_mm < 500:  # Within 50cm
+            # Higher reward for closer distances
+            distance_reward = (500 - front_center_distance_mm) / 500.0 * 20.0
+            reward += distance_reward
+        
+        # PHASE TRANSITION: Use raw IR history approach with 6mm threshold
+        # Need 8+ readings below 6mm for reliable object contact detection
+        if close_readings_count >= self.required_close_readings:
+            reward += 100.0  # Big reward for successful collection
+            info['collection_complete'] = True
+            info['phase_transition_ready'] = True
+            self._transition_to_phase(2, f"Object collected - {close_readings_count}/{len(self.front_ir_history)} readings ≤{self.phase_transition_threshold_mm}mm (READY FOR TARGET SEARCH)")
+        elif close_readings_count >= self.required_close_readings // 2:  # Half way there
+            reward += 30.0
+            info['progress_to_collection'] = True
+        elif front_center_distance_mm <= 100.0:  # Close but not consistent
+            reward += 10.0
+            info['close_to_object'] = True
+            
+        # Store values for debugging
+        info['front_c_distance_mm'] = front_center_distance_mm
+        info['front_c_ir_intensity'] = front_center_ir_intensity
+        info['close_readings_count'] = close_readings_count
+        info['total_readings'] = len(self.front_ir_history)
+        return reward
+
+    def _calculate_phase2_reward(self, action_idx, ir_values, vision_values, info):
+        """Phase 2: Target Detection - Search for green target while having object"""
+        reward = 0.0
+        
+        # Extract vision data
+        target_detected = vision_values[3]    # Binary: green target visible
+        target_distance = vision_values[4]    # Normalized distance [0,1]
+        target_angle = vision_values[5]       # Normalized angle [-1,1]
+        
+        # 1. Target Detection Rewards
+        if target_detected > 0.5:  # Green target is visible
+            # Base reward for finding target
+            base_target_reward = 10.0
+            reward += base_target_reward
+            info['target_in_view'] = True
+            
+            # Position-based rewards (same 3-section approach as Phase 0)
+            abs_angle = abs(target_angle)
+            
+            if abs_angle <= 0.33:  # Target in middle section
+                middle_reward = 15.0
+                reward += middle_reward
+                info['target_in_middle'] = True
+            elif abs_angle <= 0.66:  # Target in side sections
+                side_reward = 5.0
+                reward += side_reward
+                info['target_in_side'] = True
+            
+            # Distance-based reward (closer = better)
+            distance_reward = (1.0 - target_distance) * 8.0
+            reward += distance_reward
+            info['target_distance_reward'] = distance_reward
+            
+            # Check for phase completion: target must be very centered (strict alignment)
+            if abs_angle <= 0.1:  # Target very centered - ready for Phase 2 (stricter than 0.33)
+                positioning_bonus = 30.0
+                reward += positioning_bonus
+                info['target_positioned'] = True
+                info['phase_transition_ready'] = True
                 
-                # Small penalty for staying in same areas too long
-                if self.steps_since_exploration > 10:
-                    stagnation_penalty = min((self.steps_since_exploration - 10) * 0.1, 1.0)
-                    return -stagnation_penalty
+                # Trigger phase transition to Phase 3
+                self._transition_to_phase(3, f"Target very centered (angle={target_angle:.3f}) - ready for pushing")
+        else:
+            info['target_in_view'] = False
+        
+        # 2. Turning and Searching Rewards
+        # All actions in Phase 1 are turning actions for 360-degree search
+        if target_detected <= 0.5:  # No target detected - encourage systematic search
+            # Base turning reward for systematic search
+            base_turning_reward = 2.0
+            reward += base_turning_reward
+            info['systematic_search'] = True
             
-            # Small reward for movement (prevents staying in one spot)
-            if self.last_position is not None:
-                movement_distance = np.linalg.norm(np.array(current_pos) - np.array(self.last_position))
-                movement_reward = min(movement_distance * 1.0, 0.5)  # Increased movement reward
-                self.last_position = current_pos
-                return movement_reward
+            # Bonus for varied turning (avoid getting stuck)
+            if hasattr(self, 'action_history') and len(self.action_history) > 0:
+                if action_idx != self.action_history[-1]:  # Different from last action
+                    variety_bonus = 1.0
+                    reward += variety_bonus
+                    info['search_variety'] = True
+        
+        # 3. Maintain Object Proximity (ensure we don't lose the collected object)
+        object_detected = vision_values[0]
+        front_c_ir = ir_values[4]  # FrontC sensor
+        
+        if front_c_ir < 0.3:  # Object still close (maintain collection)
+            object_maintenance_reward = 3.0
+            reward += object_maintenance_reward
+            info['object_maintained'] = True
+        elif front_c_ir > 0.6:  # Object too far - penalty
+            object_loss_penalty = -5.0
+            reward += object_loss_penalty
+            info['object_lost'] = True
+        
+        # 4. Prevent excessive spinning in one direction
+        if hasattr(self, 'action_history') and len(self.action_history) >= 3:
+            recent_actions = list(self.action_history)[-3:]
+            if len(set(recent_actions)) == 1:  # Same action repeated 3 times
+                repetition_penalty = -2.0
+                reward += repetition_penalty
+                info['repetitive_search'] = True
+        
+        # Store additional info for debugging
+        info['target_angle'] = target_angle
+        info['target_distance'] = target_distance
+        info['front_c_ir'] = front_c_ir
+        
+        return reward
+
+    def _calculate_phase3_reward(self, action_idx, ir_values, vision_values, info):
+        """Phase 3: Push to Target - Navigate and push object to target"""
+        reward = 0.0
+        
+        # Extract vision data
+        target_detected = vision_values[3]    # Binary: green target visible
+        target_distance = vision_values[4]    # Normalized distance [0,1]
+        target_angle = vision_values[5]       # Normalized angle [-1,1]
+        
+        # Extract front center IR for object maintenance
+        front_center_ir = ir_values[4]  # FrontC
+        
+        # 1. Forward Movement Rewards
+        # Encourage only straight forward movement since alignment was done in Phase 1
+        if action_idx == 1:  # Forward (straight)
+            forward_reward = 15.0
+            reward += forward_reward
+            info['forward_movement'] = True
+        elif action_idx == 3:  # Fast Forward (decisive pushing)
+            fast_forward_reward = 20.0  # Highest reward for aggressive pushing
+            reward += fast_forward_reward
+            info['fast_forward'] = True
+        elif action_idx == 6:  # Medium Forward (steady push)
+            medium_forward_reward = 12.0
+            reward += medium_forward_reward
+            info['medium_forward'] = True
+        # No rewards for other movements since robot should already be aligned
+        
+        # 2. Distance-Based Rewards: Green Target Area Coverage
+        if target_detected > 0.5:
+            # Base reward for keeping target in view
+            target_view_reward = 5.0
+            reward += target_view_reward
+            info['target_in_view'] = True
             
-            self.last_position = current_pos
-            return 0.0
+            # Distance-based reward: closer target = higher reward
+            # target_distance: 1.0 = far, 0.0 = very close
+            # Convert to proximity: 1.0 - target_distance
+            target_proximity = 1.0 - target_distance
             
-        except Exception as e:
-            print(f"Error calculating exploration reward: {e}")
-            return 0.0
-    
+            # Area coverage reward (proximity squared to emphasize getting very close)
+            area_coverage_reward = target_proximity * target_proximity * 20.0  # Max 20 points when very close
+            reward += area_coverage_reward
+            info['area_coverage_reward'] = area_coverage_reward
+            info['target_proximity'] = target_proximity
+            
+            # Bonus for very close proximity (simulating large area coverage)
+            if target_distance <= 0.2:  # Very close to target
+                close_proximity_bonus = 25.0
+                reward += close_proximity_bonus
+                info['very_close_to_target'] = True
+                
+                # Check for task completion when very close
+                if target_distance <= 0.1:  # Extremely close - task completion
+                    completion_bonus = 100.0
+                    reward += completion_bonus
+                    info['task_completion_imminent'] = True
+            
+            # Directional alignment reward (target should be centered for straight push)
+            abs_angle = abs(target_angle)
+            if abs_angle <= 0.2:  # Target well-centered
+                alignment_reward = 10.0
+                reward += alignment_reward
+                info['target_aligned'] = True
+            elif abs_angle <= 0.4:  # Reasonably centered
+                partial_alignment_reward = 5.0
+                reward += partial_alignment_reward
+                info['target_partially_aligned'] = True
+        else:
+            # Penalty for losing sight of target
+            target_lost_penalty = -8.0
+            reward += target_lost_penalty
+            info['target_lost'] = True
+        
+        # 3. Object Maintenance (ensure we're still pushing the object)
+        if front_center_ir < 0.3:
+            # Object still close - good for maintaining contact while pushing
+            object_contact_reward = 6.0
+            reward += object_contact_reward
+            info['object_contact_maintained'] = True
+        elif front_center_ir > 0.7:
+            # Object too far - penalty for losing contact
+            object_contact_penalty = -10.0
+            reward += object_contact_penalty
+            info['object_contact_lost'] = True
+        
+        # 4. Progress tracking: reward for sustained forward movement toward target
+        if hasattr(self, 'last_target_distance'):
+            distance_change = self.last_target_distance - target_distance
+            if distance_change > 0.01:  # Getting closer to target
+                progress_reward = distance_change * 50.0  # Reward proportional to progress
+                reward += progress_reward
+                info['progress_toward_target'] = distance_change
+        
+        # Store current distance for next step comparison
+        self.last_target_distance = target_distance
+        
+        # Store additional info for debugging
+        info['target_distance'] = target_distance
+        info['target_angle'] = target_angle
+        info['front_center_ir'] = front_center_ir
+        
+        return reward
+        
+  
     def _estimate_current_position(self) -> Optional[Tuple[float, float]]:
         """Estimate current position based on movement history and sensors
         
@@ -803,155 +1153,231 @@ class RobotEnvironment:
         except Exception as e:
             print(f"Error estimating position: {e}")
             return None
-    
-    def _check_food_collision(self):
-        """Simple food collection detection like CV_DQN.py
+
+    def _get_object_target_state(self):
+        """Get object and target state from vision processor for Task 3
         
-        Uses simulation's built-in food collection tracking rather than 
-        complex IR+camera collision detection.
-        """
-        if hasattr(self.robot, 'get_nr_food_collected'):
-            current_count = self.robot.get_nr_food_collected()
-            if current_count > self.food_collected:
-                # Food was collected since last check
-                food_collected_this_step = current_count - self.food_collected
-                self.food_collected = current_count
-                return food_collected_this_step > 0
-        return False
-    
-    def _is_colliding_with_food(self, camera_frame):
-        """Check if current collision is with food vs obstacle
-        
-        Returns True if significant green (food) is visible during collision,
-        indicating the robot is touching a food box rather than a wall.
-        """
-        if camera_frame is None:
-            return False
-        
-        try:
-            # Get green pixel distribution
-            left_green, middle_green, right_green = self.vision_processor._analyze_green_sections(camera_frame)
-            
-            # If significant green is visible, especially in center, it's likely food collision
-            total_green = left_green + middle_green + right_green
-            center_green_dominant = middle_green > max(left_green, right_green)
-            
-            # Food collision criteria:
-            # 1. Substantial green visible (>5% of view)
-            # 2. Green concentrated in center (robot facing food)
-            is_food_collision = (total_green > 5.0) and (center_green_dominant or middle_green > 8.0)
-            
-            return is_food_collision
-            
-        except Exception as e:
-            print(f"Error checking food collision: {e}")
-            return False
-    
-    def _get_panoramic_food_state(self):
-        """Get enhanced food detection state from camera
-        
-        Returns comprehensive vision data for the state representation.
+        Returns:
+            list: [object_detected, object_distance, object_angle, target_detected, target_distance, target_angle]
+                - object_detected: 1.0 if red object visible, 0.0 otherwise
+                - object_distance: normalized distance to object [0,1] where 0=close, 1=far
+                - object_angle: normalized angle to object [-1,1] where -1=left, 0=center, 1=right
+                - target_detected: 1.0 if green target visible, 0.0 otherwise  
+                - target_distance: normalized distance to target [0,1] where 0=close, 1=far
+                - target_angle: normalized angle to target [-1,1] where -1=left, 0=center, 1=right
         """
         try:
             camera_frame = self.robot.read_image_front()
             if camera_frame is None:
-                return [0.0, 1.0, 0.0]  # Default: no food detected, max distance, centered
+                return [0.0, 1.0, 0.0, 0.0, 1.0, 0.0]  # Default: nothing detected, max distance, centered
             
-            # Detect food objects
-            food_objects, processed_frame = self.vision_processor.detect_green_food(camera_frame)
+            # Get object-target relationship from vision processor
+            object_target_info = self.vision_processor.get_object_target_info_dict(camera_frame)
             
-            if not food_objects:
-                return [0.0, 1.0, 0.0]  # No food visible
+            # Extract red object information
+            object_detected = 1.0 if object_target_info.get('red_objects_found', False) else 0.0
+            object_distance = object_target_info.get('red_distance', 1.0)  # Default to max distance if not found
+            object_angle = object_target_info.get('red_angle', 0.0)  # Default to center if not found
             
-            # Find closest food
-            closest_food = min(food_objects, key=lambda f: f['distance'])
+            # Extract green target information  
+            target_detected = 1.0 if object_target_info.get('green_targets_found', False) else 0.0
+            target_distance = object_target_info.get('green_distance', 1.0)  # Default to max distance if not found
+            target_angle = object_target_info.get('green_angle', 0.0)  # Default to center if not found
             
-            # Extract features
-            food_detected = 1.0  # Binary: food visible
-            distance_normalized = min(closest_food['distance'], 1.0)  # Clamp to [0,1]
-            angle_normalized = closest_food['angle'] / 90.0  # Normalize angle to [-1,1]
+            # Normalize distances to [0,1] range (0=close, 1=far)
+            object_distance = min(max(object_distance, 0.0), 1.0)
+            target_distance = min(max(target_distance, 0.0), 1.0)
             
-            return [food_detected, distance_normalized, angle_normalized]
+            # Normalize angles to [-1,1] range (-1=left, 0=center, 1=right)
+            object_angle = min(max(object_angle, -1.0), 1.0)
+            target_angle = min(max(target_angle, -1.0), 1.0)
+            
+            return [object_detected, object_distance, object_angle, 
+                   target_detected, target_distance, target_angle]
             
         except Exception as e:
-            print(f"Error getting panoramic food state: {e}")
-            return [0.0, 1.0, 0.0]  # Default safe values
-
-
-class FoodVisionProcessor:
-    """Computer Vision system for green food detection and localization
+            print(f"Error getting object-target state: {e}")
+            return [0.0, 1.0, 0.0, 0.0, 1.0, 0.0]  # Default safe values
     
-    This class handles all computer vision tasks for Task 2:
-    - Green color detection and masking
-    - Food object localization and distance estimation
-    - Multi-angle scanning for comprehensive food detection
+    def _check_task_completion(self):
+        """Check if Task 3 object pushing is completed
+        
+        Task 3 completion depends on the current phase:
+        - Phase 0-2: Not yet ready for completion
+        - Phase 3: Complete when green target disappears (robot pushed object onto target)
+        
+        Returns:
+            bool: True if task is completed, False otherwise
+        """
+        try:
+            # Only check for completion in Phase 3
+            if self.current_phase_num != 3:
+                return False
+            
+            camera_frame = self.robot.read_image_front()
+            if camera_frame is None:
+                return False
+            
+            # Get object-target relationship from vision
+            object_target_info = self.vision_processor.get_object_target_info_dict(camera_frame)
+            
+            # PHASE 3 COMPLETION CRITERIA: Green target disappears
+            # This indicates the robot has pushed the object onto the green target
+            green_targets_found = object_target_info.get('green_targets_found', False)
+            
+            # Initialize green disappearance tracking if needed
+            if not hasattr(self, 'green_disappearance_count'):
+                self.green_disappearance_count = 0
+                self.last_green_seen_step = 0
+            
+            # Track green target visibility
+            if green_targets_found:
+                # Green target is visible - reset disappearance counter
+                self.green_disappearance_count = 0
+                self.last_green_seen_step = self.step_count
+            else:
+                # Green target not visible - increment disappearance counter
+                self.green_disappearance_count += 1
+            
+            # Task completion: Green has disappeared for enough consecutive steps
+            # This indicates robot is on top of the target
+            required_disappearance_steps = 5  # Need 5 consecutive steps without green
+            
+            if self.green_disappearance_count >= required_disappearance_steps:
+                print(f"🎯 PHASE 3 Task completion detected!")
+                print(f"   Green target disappeared for {self.green_disappearance_count} consecutive steps")
+                print(f"   Last seen green at step {self.last_green_seen_step}, current step {self.step_count}")
+                print(f"   Robot successfully pushed object onto target!")
+                return True
+            
+            # Debug info for Phase 3
+            if self.step_count % 10 == 0:
+                print(f"  Phase 3 Debug - Green visible: {green_targets_found}, "
+                      f"Disappearance count: {self.green_disappearance_count}/{required_disappearance_steps}")
+            
+            return False
+            
+        except Exception as e:
+            print(f"Error checking task completion: {e}")
+            return False
+            
+        except Exception as e:
+            print(f"Error checking task completion: {e}")
+            return False
+    
+
+
+class ObjectPushVisionProcessor:
+    """Computer Vision system for object pushing task (Task 3)
+    
+    This class handles all computer vision tasks for Task 3:
+    - Red object detection and localization (object to be pushed)
+    - Green target area detection and localization (destination)
+    - Spatial relationship analysis between object and target
+    - Distance and angle estimation for both object and target
     - Noise filtering and robust detection algorithms
     """
     
     def __init__(self, debug_mode: bool = False):
         self.debug_mode = debug_mode
         
-        # Green color range for food detection (HSV)
-        # Optimized for both simulation and hardware lighting conditions
-        self.green_lower = np.array([35, 50, 50])   # Lower HSV threshold
-        self.green_upper = np.array([85, 255, 255]) # Upper HSV threshold
+        # Red color range for object detection (HSV)
+        # Optimized for detecting the red object to be pushed
+        self.red_lower = np.array([0, 100, 100])     # Lower HSV threshold for red
+        self.red_upper = np.array([10, 255, 255])    # Upper HSV threshold for red
+        self.red_lower2 = np.array([170, 100, 100])  # Second red range (wraparound)
+        self.red_upper2 = np.array([180, 255, 255])  # Second red range (wraparound)
+        
+        # Green color range for target area detection (HSV)
+        # Optimized for detecting the green target zone
+        self.green_lower = np.array([35, 50, 50])    # Lower HSV threshold for green
+        self.green_upper = np.array([85, 255, 255])  # Upper HSV threshold for green
         
         # Detection parameters
-        self.min_contour_area = 100      # Minimum pixels for valid food detection
-        self.max_detection_distance = 2.0 # Maximum detection range (meters)
+        self.min_contour_area = 100      # Minimum pixels for valid detection
+        self.max_detection_distance = 3.0 # Maximum detection range (meters)
         
         # Noise filtering
         self.gaussian_blur_kernel = (5, 5)
         self.morphology_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
         
-    def detect_green_food(self, camera_frame):
-        """Detect green food objects in camera frame
+    def detect_objects_and_target(self, camera_frame):
+        """Detect red object and green target area in camera frame
         
         Returns:
-            food_objects: List of detected food with [distance, angle, confidence]
+            red_objects: List of detected red objects with [distance, angle, confidence]
+            green_targets: List of detected green target areas with [distance, angle, confidence]
             processed_frame: Debug frame showing detection results
         """
         if camera_frame is None:
-            return [], None
+            return [], [], None
             
         try:
             # Convert to HSV for better color detection
             hsv = cv2.cvtColor(camera_frame, cv2.COLOR_BGR2HSV)
             
-            # Create mask for green color
+            # Create masks for red object (handle wraparound)
+            red_mask1 = cv2.inRange(hsv, self.red_lower, self.red_upper)
+            red_mask2 = cv2.inRange(hsv, self.red_lower2, self.red_upper2)
+            red_mask = cv2.bitwise_or(red_mask1, red_mask2)
+            
+            # Create mask for green target area
             green_mask = cv2.inRange(hsv, self.green_lower, self.green_upper)
             
-            # Noise reduction
-            green_mask = cv2.GaussianBlur(green_mask, self.gaussian_blur_kernel, 0)
-            green_mask = cv2.morphologyEx(green_mask, cv2.MORPH_OPEN, self.morphology_kernel)
-            green_mask = cv2.morphologyEx(green_mask, cv2.MORPH_CLOSE, self.morphology_kernel)
+            # Apply noise reduction to both masks
+            red_mask = self._apply_noise_reduction(red_mask)
+            green_mask = self._apply_noise_reduction(green_mask)
             
+            # Detect red objects
+            red_objects = self._detect_objects_from_mask(red_mask, camera_frame.shape, "red")
+            
+            # Detect green target areas
+            green_targets = self._detect_objects_from_mask(green_mask, camera_frame.shape, "green")
+            
+            # Create debug frame if requested
+            processed_frame = None
+            if self.debug_mode:
+                processed_frame = self._create_debug_frame(camera_frame, red_objects, green_targets, red_mask, green_mask)
+                            
+            return red_objects, green_targets, processed_frame
+            
+        except Exception as e:
+            print(f"Error in object and target detection: {e}")
+            return [], [], None
+    
+    def _apply_noise_reduction(self, mask):
+        """Apply noise reduction to a binary mask"""
+        # Gaussian blur for noise reduction
+        mask = cv2.GaussianBlur(mask, self.gaussian_blur_kernel, 0)
+        # Morphological operations to fill gaps and remove noise
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, self.morphology_kernel)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, self.morphology_kernel)
+        return mask
+    
+    def _detect_objects_from_mask(self, mask, frame_shape, object_type):
+        """Detect objects from a binary mask"""
+        try:
             # Find contours
-            contours, _ = cv2.findContours(green_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             
-            food_objects = []
-            processed_frame = camera_frame.copy() if self.debug_mode else None
+            detected_objects = []
             
             for contour in contours:
                 area = cv2.contourArea(contour)
                 if area > self.min_contour_area:
-                    # Calculate food properties
-                    food_info = self._analyze_food_contour(contour, camera_frame.shape)
-                    if food_info:
-                        food_objects.append(food_info)
+                    # Calculate object properties
+                    object_info = self._analyze_object_contour(contour, frame_shape, object_type)
+                    if object_info:
+                        detected_objects.append(object_info)
                         
-                        # Draw debug info
-                        if self.debug_mode and processed_frame is not None:
-                            cv2.drawContours(processed_frame, [contour], -1, (0, 255, 0), 2)
-                            
-            return food_objects, processed_frame
+            return detected_objects
             
         except Exception as e:
-            print(f"Error in green food detection: {e}")
-            return [], None
+            print(f"Error detecting {object_type} objects: {e}")
+            return []
     
-    def _analyze_food_contour(self, contour, frame_shape):
-        """Analyze food contour to extract distance and angle information"""
+    def _analyze_object_contour(self, contour, frame_shape, object_type):
+        """Analyze object contour to extract distance and angle information"""
         try:
             # Calculate centroid
             M = cv2.moments(contour)
@@ -973,65 +1399,214 @@ class FoodVisionProcessor:
             
             # Estimate distance based on contour area (rough approximation)
             area = cv2.contourArea(contour)
-            distance = max(0.1, min(2.0, 1000.0 / (area + 1)))  # Inverse relationship
+            if object_type == "red":
+                # Red objects are typically smaller and closer
+                distance = max(0.1, min(3.0, 1200.0 / (area + 1)))  # Adjusted for object size
+            else:  # green target area
+                # Green target areas are typically larger and may be farther
+                distance = max(0.2, min(3.0, 2000.0 / (area + 1)))  # Adjusted for target size
             
             # Calculate confidence based on area and shape
-            confidence = min(1.0, area / 1000.0)
+            confidence = min(1.0, area / 1500.0)
+            
+            # Calculate shape metrics for validation
+            perimeter = cv2.arcLength(contour, True)
+            if perimeter > 0:
+                circularity = 4 * np.pi * area / (perimeter * perimeter)
+            else:
+                circularity = 0
             
             return {
                 'distance': distance,
                 'angle': angle_degrees,
                 'confidence': confidence,
                 'centroid': (cx, cy),
-                'area': area
+                'area': area,
+                'circularity': circularity,
+                'type': object_type
             }
             
         except Exception as e:
-            print(f"Error analyzing food contour: {e}")
+            print(f"Error analyzing {object_type} contour: {e}")
             return None
     
-    def _analyze_green_sections(self, camera_frame):
-        """Analyze green content in left, middle, right sections of frame
-        
-        Returns: (left_green_percent, middle_green_percent, right_green_percent)
-        """
-        if camera_frame is None:
-            return 0.0, 0.0, 0.0
-            
+    def _create_debug_frame(self, camera_frame, red_objects, green_targets, red_mask, green_mask):
+        """Create debug visualization frame"""
         try:
-            # Convert to HSV
-            hsv = cv2.cvtColor(camera_frame, cv2.COLOR_BGR2HSV)
-            green_mask = cv2.inRange(hsv, self.green_lower, self.green_upper)
+            debug_frame = camera_frame.copy()
             
-            # Divide frame into three sections
-            height, width = green_mask.shape
-            section_width = width // 3
+            # Draw red objects
+            for obj in red_objects:
+                centroid = obj['centroid']
+                cv2.circle(debug_frame, centroid, 10, (0, 0, 255), 2)  # Red circle
+                cv2.putText(debug_frame, f"R:{obj['distance']:.2f}m", 
+                           (centroid[0] + 15, centroid[1]), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
             
-            left_section = green_mask[:, :section_width]
-            middle_section = green_mask[:, section_width:2*section_width]
-            right_section = green_mask[:, 2*section_width:]
+            # Draw green targets
+            for target in green_targets:
+                centroid = target['centroid']
+                cv2.circle(debug_frame, centroid, 15, (0, 255, 0), 2)  # Green circle
+                cv2.putText(debug_frame, f"G:{target['distance']:.2f}m", 
+                           (centroid[0] + 15, centroid[1]), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
             
-            # Calculate green percentage in each section
-            total_pixels_per_section = height * section_width
-            
-            left_green = (np.sum(left_section) / 255) / total_pixels_per_section * 100
-            middle_green = (np.sum(middle_section) / 255) / total_pixels_per_section * 100
-            right_green = (np.sum(right_section) / 255) / total_pixels_per_section * 100
-            
-            return left_green, middle_green, right_green
+            return debug_frame
             
         except Exception as e:
-            print(f"Error analyzing green sections: {e}")
-            return 0.0, 0.0, 0.0
-
-
-def green_food_collection_task2(rob: IRobobo, agent_type: str = 'dqn', mode: str = 'train', 
-                               num_episodes: int = 100, collision_threshold: float = 0.95,
-                               model_path: Optional[str] = None):
-    """Main function for Task 2: Green Food Collection using RL + Computer Vision
+            print(f"Error creating debug frame: {e}")
+            return camera_frame
     
-    This function orchestrates the complete food collection task including:
-    - Environment setup with computer vision
+    def get_object_target_relationship(self, camera_frame):
+        """Get spatial relationship between object and target for state representation
+        
+        Returns: [object_detected, object_distance, object_angle, target_detected, target_distance, target_angle]
+        """
+        try:
+            red_objects, green_targets, _ = self.detect_objects_and_target(camera_frame)
+            
+            # Default values: no detection
+            object_detected = 0.0
+            object_distance = 1.0
+            object_angle = 0.0
+            target_detected = 0.0
+            target_distance = 1.0
+            target_angle = 0.0
+            
+            # Find closest red object
+            if red_objects:
+                closest_object = min(red_objects, key=lambda obj: obj['distance'])
+                object_detected = 1.0
+                object_distance = min(closest_object['distance'] / self.max_detection_distance, 1.0)
+                object_angle = closest_object['angle'] / 30.0  # Normalize angle to [-1, 1]
+            
+            # Find closest green target
+            if green_targets:
+                closest_target = min(green_targets, key=lambda target: target['distance'])
+                target_detected = 1.0
+                target_distance = min(closest_target['distance'] / self.max_detection_distance, 1.0)
+                target_angle = closest_target['angle'] / 30.0  # Normalize angle to [-1, 1]
+            
+            return [object_detected, object_distance, object_angle, target_detected, target_distance, target_angle]
+            
+        except Exception as e:
+            print(f"Error getting object-target relationship: {e}")
+            return [0.0, 1.0, 0.0, 0.0, 1.0, 0.0]  # Default safe values
+        
+    def get_object_target_info_dict(self, camera_frame):
+        """Get object and target information as dictionary for environment interface
+        
+        This method provides the expected interface for the environment to get
+        vision information in dictionary format.
+        
+        Args:
+            camera_frame: Input camera frame
+            
+        Returns:
+            dict: Dictionary containing object and target detection information
+        """
+        try:
+            red_objects, green_targets, _ = self.detect_objects_and_target(camera_frame)
+            
+            # Initialize default values
+            result = {
+                'red_objects_found': False,
+                'red_distance': 1.0,  # Max distance when not found
+                'red_angle': 0.0,     # Center when not found
+                'red_center_x': 0.5,  # Center of frame
+                'red_center_y': 0.5,  # Center of frame
+                'red_size': 0.0,      # No size when not found
+                'green_targets_found': False,
+                'green_distance': 1.0,  # Max distance when not found
+                'green_angle': 0.0,     # Center when not found
+                'green_center_x': 0.5,  # Center of frame
+                'green_center_y': 0.5,  # Center of frame
+                'green_size': 0.0,      # No size when not found
+            }
+            
+            # Process red objects (find closest)
+            if red_objects:
+                closest_red = min(red_objects, key=lambda obj: obj['distance'])
+                result['red_objects_found'] = True
+                result['red_distance'] = min(closest_red['distance'] / self.max_detection_distance, 1.0)
+                result['red_angle'] = closest_red['angle'] / 30.0  # Normalize to [-1, 1]
+                
+                # Convert centroid to normalized coordinates
+                if camera_frame is not None:
+                    height, width = camera_frame.shape[:2]
+                    result['red_center_x'] = closest_red['centroid'][0] / width
+                    result['red_center_y'] = closest_red['centroid'][1] / height
+                    result['red_size'] = min(closest_red['area'] / (width * height), 1.0)
+            
+            # Process green targets (find closest)
+            if green_targets:
+                closest_green = min(green_targets, key=lambda target: target['distance'])
+                result['green_targets_found'] = True
+                result['green_distance'] = min(closest_green['distance'] / self.max_detection_distance, 1.0)
+                result['green_angle'] = closest_green['angle'] / 30.0  # Normalize to [-1, 1]
+                
+                # Convert centroid to normalized coordinates
+                if camera_frame is not None:
+                    height, width = camera_frame.shape[:2]
+                    result['green_center_x'] = closest_green['centroid'][0] / width
+                    result['green_center_y'] = closest_green['centroid'][1] / height
+                    result['green_size'] = min(closest_green['area'] / (width * height), 1.0)
+            
+            return result
+            
+        except Exception as e:
+            print(f"Error in get_object_target_info_dict: {e}")
+            # Return safe default values on error
+            return {
+                'red_objects_found': False,
+                'red_distance': 1.0,
+                'red_angle': 0.0,
+                'red_center_x': 0.5,
+                'red_center_y': 0.5,
+                'red_size': 0.0,
+                'green_targets_found': False,
+                'green_distance': 1.0,
+                'green_angle': 0.0,
+                'green_center_x': 0.5,
+                'green_center_y': 0.5,
+                'green_size': 0.0,
+            }
+
+    def _ir_intensity_to_distance(self, intensity_value: float) -> float:
+        """Convert IR intensity value to distance in millimeters.
+        
+        Based on the Lua script calculations:
+        - valorIR = a * (distancia[i] ^ b) where a = 0.1288, b = -1.7887
+        - We need to reverse this: distance = (intensity / a) ^ (1/b)
+        """
+        if intensity_value <= 0:
+            return 1000.0  # Maximum distance for no/invalid reading
+        
+        # Reverse the Lua calculation: distance = (intensity / a) ^ (1/b)
+        a = 0.1288
+        b = -1.7887
+        
+        try:
+            # Calculate distance from intensity
+            distance = (intensity_value / a) ** (1.0 / b)
+            
+            # Clamp to reasonable range (1mm to 1000mm) - allow very close distances
+            distance = max(1.0, min(distance, 1000.0))
+            return distance
+        except (ZeroDivisionError, ValueError, OverflowError):
+            return 1000.0  # Return max distance on calculation error
+
+    # ...existing code...
+def object_pushing_task3(rob: IRobobo, agent_type: str = 'dqn', mode: str = 'train', 
+                         num_episodes: int = 100, collision_threshold: float = 0.95,
+                         model_path: Optional[str] = None, max_episode_time: int = 300,
+                         learning_rate: float = 0.001, gamma: float = 0.99,
+                         epsilon: float = 1.0, epsilon_decay: float = 0.995,
+                         epsilon_min: float = 0.01, save_freq: int = 100,
+                         load_model_path: Optional[str] = None, 
+                         save_model_path: Optional[str] = None, **kwargs):
+    """Main function for Task 3: Object Pushing to Target using RL + Computer Vision
+    
+    This function orchestrates the complete object pushing task including:
+    - Environment setup with computer vision for object and target detection
     - RL agent initialization and training
     - Performance evaluation and metrics collection
     - Model saving and visualization
@@ -1042,42 +1617,63 @@ def green_food_collection_task2(rob: IRobobo, agent_type: str = 'dqn', mode: str
         mode: 'train', 'evaluate', or 'train_and_evaluate'
         num_episodes: Number of episodes to run
         collision_threshold: IR sensor threshold for collision detection
+        model_path: Path to pre-trained model (legacy parameter, use load_model_path)
+        max_episode_time: Maximum episode duration in seconds
+        learning_rate: Learning rate for RL agent
+        gamma: Discount factor for RL agent
+        epsilon: Initial exploration rate for epsilon-greedy policies
+        epsilon_decay: Decay rate for epsilon
+        epsilon_min: Minimum epsilon value
+        save_freq: Frequency for saving models (episodes)
+        load_model_path: Path to load pre-trained model from
+        save_model_path: Path to save trained model to
+        **kwargs: Additional arguments
         
     Returns:
         Dict with training results, performance metrics, and saved file paths
     """
     
-    print(f"\n🎯 TASK 2: GREEN FOOD COLLECTION")
+    print(f"\n🎯 TASK 3: OBJECT PUSHING TO TARGET")
     print(f"Agent: {agent_type.upper()}, Mode: {mode}, Episodes: {num_episodes}")
     print(f"Environment: {'Simulation' if isinstance(rob, SimulationRobobo) else 'Hardware'}")
     
-    # Initialize computer vision processor
-    vision_processor = FoodVisionProcessor(debug_mode=True)
+    # Initialize computer vision processor for object and target detection
+    vision_processor = ObjectPushVisionProcessor(debug_mode=True)
     
-    # Create environment
-    env = RobotEnvironment(rob, vision_processor, max_episode_time=180, 
-                          collision_threshold=collision_threshold)
+    # Create environment with optional image saving
+    env = RobotEnvironment(rob, vision_processor, max_episode_time=max_episode_time, 
+                          collision_threshold=collision_threshold, save_images=True, 
+                          image_save_interval=100)  # Save every 100 steps
     
-    # Get hyperparameters for the chosen agent type
+    # Get default hyperparameters and override with provided values
     hyperparams = get_default_hyperparameters(agent_type)
+    hyperparams.update({
+        'learning_rate': learning_rate,
+        'gamma': gamma,
+        'epsilon': epsilon,
+        'epsilon_decay': epsilon_decay,
+        'epsilon_min': epsilon_min
+    })
     
     # Create RL agent
     agent = create_rl_agent(
         agent_type=agent_type,
         state_size=env.state_size,
-        action_size=env.action_space_size,
+        action_size=env.get_action_space_size(),
         **hyperparams
     )
     
-    # Load pre-trained model if provided (for evaluation mode)
-    if model_path and mode in ['evaluate', 'test']:
-        print(f"Loading pre-trained model: {model_path}")
+    # Load pre-trained model if provided
+    model_to_load = load_model_path or model_path  # Support both new and legacy parameter
+    if model_to_load:
+        print(f"Loading pre-trained model: {model_to_load}")
         try:
-            agent.load_model(model_path)
+            agent.load_model(model_to_load)
             print("✅ Model loaded successfully!")
         except Exception as e:
             print(f"❌ Failed to load model: {e}")
-            return None
+            if mode in ['evaluate', 'test']:
+                return None
     
     # Performance tracking
     results = {
@@ -1085,12 +1681,12 @@ def green_food_collection_task2(rob: IRobobo, agent_type: str = 'dqn', mode: str
         'mode': mode,
         'episodes': num_episodes,
         'episode_rewards': [],
-        'episode_foods_collected': [],
+        'episode_task_completions': [],
         'episode_lengths': [],
         'episode_success_rates': [],
         'training_time': 0,
         'best_episode_reward': float('-inf'),
-        'best_foods_collected': 0,
+        'best_task_completion': False,
         'model_path': None,
         'metrics_path': None,
         'convergence_episode': None
@@ -1140,45 +1736,51 @@ def green_food_collection_task2(rob: IRobobo, agent_type: str = 'dqn', mode: str
                 
                 # Print step info every 50 steps
                 if step_count % 50 == 0:
-                    foods = info.get('food_collected_count', 0)
+                    task_completed = info.get('task_completed', False)
                     time_elapsed = time.time() - episode_start_time
                     action_name = env.action_descriptions[action]
-                    print(f"  Step {step_count:3d} | Food: {foods}/7 (Sim:{env.food_collected}) | "
+                    print(f"  Step {step_count:3d} | Task: {'✅' if env.task_completed else '❌'} | "
                           f"Time: {time_elapsed:.1f}s | Reward: {total_reward:.1f} | "
                           f"Action: {action_name}")
             
             # Episode complete
             episode_time = time.time() - episode_start_time
-            foods_collected = env.food_collected
-            success = foods_collected >= 7
+            task_completed = env.task_completed
+            success = task_completed
             
             # Record results
             results['episode_rewards'].append(total_reward)
-            results['episode_foods_collected'].append(foods_collected)
+            results['episode_task_completions'].append(1.0 if task_completed else 0.0)
             results['episode_lengths'].append(step_count)
             results['episode_success_rates'].append(1.0 if success else 0.0)
             
             # Track best performance
             if total_reward > results['best_episode_reward']:
                 results['best_episode_reward'] = total_reward
-            if foods_collected > results['best_foods_collected']:
-                results['best_foods_collected'] = foods_collected
+            if task_completed and not results['best_task_completion']:
+                results['best_task_completion'] = True
             
             # Episode summary
             success_rate = np.mean(results['episode_success_rates'][-10:]) * 100  # Last 10 episodes
             print(f"  ✅ Episode {episode + 1} Complete:")
-            print(f"     Food Collected: {foods_collected}/7 ({'SUCCESS' if success else 'PARTIAL'})")
+            print(f"     Task Status: {'COMPLETED ✅' if task_completed else 'INCOMPLETE ❌'}")
             print(f"     Episode Time: {episode_time:.1f}s")
             print(f"     Episode Reward: {total_reward:.1f}")
             print(f"     Success Rate: {success_rate:.1f}%")
             
             # Save model periodically
-            if (episode + 1) % 50 == 0:
+            if (episode + 1) % save_freq == 0:
                 timestamp = int(time.time())
-                model_filename = f"rl_model_{agent_type}_{timestamp}.pth"
-                model_save_path = FIGURES_DIR / model_filename
+                if save_model_path:
+                    model_save_path = Path(save_model_path)
+                    # Ensure we have a .pth extension
+                    if not model_save_path.suffix:
+                        model_save_path = model_save_path.with_suffix('.pth')
+                else:
+                    model_filename = f"rl_model_{agent_type}_{timestamp}.pth"
+                    model_save_path = FIGURES_DIR / model_filename
                 agent.save_model(str(model_save_path))
-                print(f"     💾 Model saved: {model_filename}")
+                print(f"     💾 Model saved: {model_save_path.name}")
         
         results['training_time'] = time.time() - start_time
         print(f"\n🎯 Training completed in {results['training_time']:.1f} seconds")
@@ -1197,7 +1799,7 @@ def green_food_collection_task2(rob: IRobobo, agent_type: str = 'dqn', mode: str
             
             print(f"\n📍 Evaluation Episode {episode + 1}/{num_episodes}")
             
-            while not done and step_count < 1800:  # 3 minutes at 10 Hz
+            while not done and step_count < 3000:  # 5 minutes at 10 Hz
                 # Agent selects action (no exploration in evaluation mode)
                 if hasattr(agent, 'act'):
                     action = agent.act(state, training=False)
@@ -1217,37 +1819,39 @@ def green_food_collection_task2(rob: IRobobo, agent_type: str = 'dqn', mode: str
                 
                 # Print step info every 50 steps
                 if step_count % 50 == 0:
-                    foods = info.get('food_collected_count', 0)
+                    task_completed = info.get('task_completed', False)
                     time_elapsed = time.time() - episode_start_time
                     action_name = env.action_descriptions[action]
-                    print(f"  Step {step_count:3d} | Food: {foods}/7 (Sim:{env.food_collected}) | "
+                    print(f"  Step {step_count:3d} | Task: {'✅' if env.task_completed else '❌'} | "
                           f"Time: {time_elapsed:.1f}s | Reward: {total_reward:.1f} | "
                           f"Action: {action_name}")
             
             # Episode complete
             episode_time = time.time() - episode_start_time
-            foods_collected = env.food_collected
-            success = foods_collected >= 7
+            task_completed = env.task_completed
+            success = task_completed
             
             # Record results
             results['episode_rewards'].append(total_reward)
-            results['episode_foods_collected'].append(foods_collected)
+            results['episode_task_completions'].append(1.0 if task_completed else 0.0)
             results['episode_lengths'].append(step_count)
             results['episode_success_rates'].append(1.0 if success else 0.0)
             
             # Track best performance
             if total_reward > results['best_episode_reward']:
                 results['best_episode_reward'] = total_reward
-            if foods_collected > results['best_foods_collected']:
-                results['best_foods_collected'] = foods_collected
+            if task_completed and not results['best_task_completion']:
+                results['best_task_completion'] = True
             
             # Episode summary
             success_rate = np.mean(results['episode_success_rates'][-10:]) * 100  # Last 10 episodes
             print(f"  ✅ Evaluation Episode {episode + 1} Complete:")
-            print(f"     Food Collected: {foods_collected}/7 ({'SUCCESS' if success else 'PARTIAL'})")
+            print(f"     Task Status: {'COMPLETED ✅' if task_completed else 'INCOMPLETE ❌'}")
             print(f"     Episode Time: {episode_time:.1f}s")
             print(f"     Episode Reward: {total_reward:.1f}")
             print(f"     Success Rate: {success_rate:.1f}%")
+        
+
         
         results['evaluation_time'] = time.time() - start_time
         print(f"\n🎯 Evaluation completed in {results['evaluation_time']:.1f} seconds")
@@ -1257,11 +1861,18 @@ def green_food_collection_task2(rob: IRobobo, agent_type: str = 'dqn', mode: str
     
     # Save model
     if mode in ['train', 'train_and_evaluate']:
-        model_filename = f"rl_model_{agent_type}_{timestamp}.pth"
-        model_save_path = FIGURES_DIR / model_filename
+        if save_model_path:
+            model_save_path = Path(save_model_path)
+            # Ensure we have a .pth extension
+            if not model_save_path.suffix:
+                model_save_path = model_save_path.with_suffix('.pth')
+        else:
+            model_filename = f"rl_model_{agent_type}_{timestamp}.pth"
+            model_save_path = FIGURES_DIR / model_filename
+        
         agent.save_model(str(model_save_path))
         results['model_path'] = str(model_save_path)
-        print(f"✅ Final model saved: {model_filename}")
+        print(f"✅ Final model saved: {model_save_path.name}")
     
     # Save metrics
     metrics_filename = f"training_metrics_{agent_type}_{timestamp}.json"
@@ -1289,14 +1900,15 @@ def green_food_collection_task2(rob: IRobobo, agent_type: str = 'dqn', mode: str
     return results
 
 
-def test_task2_capabilities(rob: IRobobo):
-    """Test all capabilities required for Task 2: Green Food Collection
+
+def test_task3_capabilities(rob: IRobobo):
+    """Test all capabilities required for Task 3: Object Pushing to Target
     
-    This function tests various components needed for Task 2 including:
-    - Computer vision for green food detection
+    This function tests various components needed for Task 3 including:
+    - Computer vision for object and target detection
     - Movement capabilities for navigation
     - Sensor readings for obstacle avoidance
-    - Food collection mechanism
+    - Object manipulation mechanism
     
     Args:
         rob: Robot interface (SimulationRobobo or HardwareRobobo)
@@ -1305,7 +1917,7 @@ def test_task2_capabilities(rob: IRobobo):
     import numpy as np
     import cv2
     
-    print("\n===== TESTING TASK 2 CAPABILITIES =====")
+    print("\n===== TESTING TASK 3 CAPABILITIES =====")
     
     # Test basic movements
     print("\n1. Testing basic movements...")
@@ -1331,40 +1943,35 @@ def test_task2_capabilities(rob: IRobobo):
     ir_values = rob.read_irs()
     print(f"IR Sensor Values: {ir_values}")
     
-    # Test camera for food detection
-    print("\n3. Testing camera for food detection...")
+    # Test camera for object and target detection
+    print("\n3. Testing camera for object and target detection...")
     image = rob.read_image_front()
     if image is not None:
-        # Simple green detection
-        hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-        lower_green = np.array([35, 100, 100])
-        upper_green = np.array([85, 255, 255])
-        mask = cv2.inRange(hsv, lower_green, upper_green)
-        green_pixels = np.sum(mask > 0)
-        green_percentage = (green_pixels / (image.shape[0] * image.shape[1])) * 100
+        # Initialize object push vision processor
+        vision_processor = ObjectPushVisionProcessor(debug_mode=True)
+        object_target_info = vision_processor.get_object_target_relationship(image)
         
-        print(f"Green pixels detected: {green_pixels} ({green_percentage:.2f}%)")
+        print(f"Red objects detected: {object_target_info['red_objects_found']}")
+        print(f"Green targets detected: {object_target_info['green_targets_found']}")
         
-        # Save the image and mask for inspection
+        if object_target_info['red_objects_found']:
+            print(f"Red object center: ({object_target_info['red_center_x']:.2f}, {object_target_info['red_center_y']:.2f})")
+            print(f"Red object size: {object_target_info['red_size']:.2f}")
+        
+        if object_target_info['green_targets_found']:
+            print(f"Green target center: ({object_target_info['green_center_x']:.2f}, {object_target_info['green_center_y']:.2f})")
+            print(f"Green target size: {object_target_info['green_size']:.2f}")
+        
+        # Save the debug image for inspection
         if isinstance(rob, SimulationRobobo):
-            cv2.imwrite("results/figures/test_camera_rgb.png", image)
-            cv2.imwrite("results/figures/test_green_mask.png", mask)
+            cv2.imwrite("results/figures/test_task3_camera.png", image)
     else:
         print("Failed to capture image from camera")
     
-    # Test food collection (simulation only)
-    if isinstance(rob, SimulationRobobo):
-        print("\n4. Testing food collection (simulation only)...")
-        try:
-            food_count = rob.get_nr_food_collected()
-            print(f"Current food collected: {food_count}")
-        except Exception as e:
-            print(f"Food collection test failed: {e}")
-    
     # Test complete environment integration
-    print("\n5. Testing environment integration...")
+    print("\n4. Testing environment integration...")
     try:
-        vision_processor = FoodVisionProcessor(debug_mode=True)
+        vision_processor = ObjectPushVisionProcessor(debug_mode=True)
         env = RobotEnvironment(rob, vision_processor, max_episode_time=30)
         state = env.reset()
         
@@ -1382,40 +1989,34 @@ def test_task2_capabilities(rob: IRobobo):
     except Exception as e:
         print(f"Environment integration test failed: {e}")
     
-    print("\n===== TASK 2 CAPABILITY TESTING COMPLETE =====")
+    print("\n===== TASK 3 CAPABILITY TESTING COMPLETE =====")
 
 
-def demo_task2_food_collection(rob: IRobobo, duration: int = 60):
-    """Demo for Task 2: Green Food Collection without RL
+def demo_task3_object_pushing(rob: IRobobo, duration: int = 60):
+    """Demo for Task 3: Object Pushing without RL
     
-    This function demonstrates a simple food collection behavior
+    This function demonstrates a simple object pushing behavior
     without using reinforcement learning. It uses basic computer vision
-    and hardcoded behaviors to collect green food items.
+    and hardcoded behaviors to push red objects towards green targets.
     
     Args:
         rob: Robot interface (SimulationRobobo or HardwareRobobo)
         duration: Duration of the demo in seconds
     """
-    import time
-    import numpy as np
-    import cv2
     from datetime import datetime
     
-    print("\n===== TASK 2 FOOD COLLECTION DEMO =====")
+    print("\n===== TASK 3 OBJECT PUSHING DEMO =====")
     print(f"Running demo for {duration} seconds...")
     
     # Initialize vision processor
-    vision_processor = FoodVisionProcessor(debug_mode=True)
+    vision_processor = ObjectPushVisionProcessor(debug_mode=True)
     
     # Reset robot state
     rob.set_emotion(Emotion.NORMAL)
     rob.move(0, 0)
     
     start_time = datetime.now()
-    food_collected = 0
-    
-    if isinstance(rob, SimulationRobobo):
-        food_collected = rob.get_nr_food_collected()
+    task_completions = 0
     
     while (datetime.now() - start_time).total_seconds() < duration:
         # Get camera image
@@ -1425,68 +2026,175 @@ def demo_task2_food_collection(rob: IRobobo, duration: int = 60):
             print("Failed to capture image, skipping frame")
             continue
         
-        # Detect green food
-        food_info = vision_processor.detect_green_food(image)
+        # Detect objects and targets
+        object_target_info = vision_processor.get_object_target_relationship(image)
         
-        # Simple behavior: move towards food if detected
-        if food_info['found']:
-            # Food detected, move towards it
-            x_center = food_info['center_x']
-            size = food_info['size']
+        # Simple behavior: move towards red object to push it towards green target
+        if object_target_info['red_objects_found']:
+            # Red object detected, move towards it
+            x_center = object_target_info['red_center_x']
+            y_center = object_target_info['red_center_y']
+            size = object_target_info['red_size']
             
-            # Calculate movement based on food position
-            if x_center < 0.4:  # Food is on the left
-                rob.move(15, 5)  # Turn left while moving forward
+            # Check IR sensors for collision avoidance
+            ir_values = rob.read_irs()
+            front_collision = any(ir > 0.95 for ir in ir_values[:3])  # Front sensors
+            
+            if front_collision:
+                # Object is close, check if we need to push in direction of target
+                if object_target_info['green_targets_found']:
+                    green_x = object_target_info['green_center_x']
+                    # Push towards green target direction
+                    if green_x < x_center:
+                        rob.move(5, 15)  # Push left
+                    elif green_x > x_center:
+                        rob.move(15, 5)  # Push right
+                    else:
+                        rob.move(15, 15)  # Push forward
+                else:
+                    rob.move(10, 10)  # Just push forward
                 rob.set_emotion(Emotion.HAPPY)
-            elif x_center > 0.6:  # Food is on the right
-                rob.move(5, 15)  # Turn right while moving forward
-                rob.set_emotion(Emotion.HAPPY)
-            else:  # Food is centered
-                rob.move(20, 20)  # Move forward
-                rob.set_emotion(Emotion.SUPER_HAPPY)
-                
-            print(f"Food detected at x={x_center:.2f}, size={size:.2f}")
+                print(f"Pushing red object towards target!")
+            else:
+                # Move towards red object
+                if x_center < 0.4:
+                    rob.move(5, 15)  # Turn left
+                elif x_center > 0.6:
+                    rob.move(15, 5)  # Turn right
+                else:
+                    rob.move(15, 15)  # Move forward
+                rob.set_emotion(Emotion.NORMAL)
+                print(f"Moving towards red object at x={x_center:.2f}, y={y_center:.2f}")
+        
+        elif object_target_info['green_targets_found']:
+            # Only green target visible, search for red objects
+            rob.move(-5, 5)  # Search by turning
+            rob.set_emotion(Emotion.NORMAL)
+            print("Target visible, searching for objects to push...")
+            
         else:
-            # No food detected, search by turning
+            # No objects or targets detected, search by turning
             rob.move(-5, 5)  # Turn in place
             rob.set_emotion(Emotion.NORMAL)
-            print("Searching for food...")
+            print("Searching for objects and targets...")
         
-        # Check if food was collected (simulation only)
-        if isinstance(rob, SimulationRobobo):
-            current_food = rob.get_nr_food_collected()
-            if current_food > food_collected:
+        # Check for task completion (when object is near target)
+        if (object_target_info['red_objects_found'] and 
+            object_target_info['green_targets_found']):
+            red_x = object_target_info['red_center_x']
+            green_x = object_target_info['green_center_x']
+            distance = abs(red_x - green_x)
+            
+            if distance < 0.1:  # Object very close to target
+                task_completions += 1
                 rob.set_emotion(Emotion.LAUGHING)
                 rob.play_emotion_sound(SoundEmotion.LAUGHING)
-                print(f"Food collected! Total: {current_food}")
-                food_collected = current_food
+                print(f"Task completion detected! Total: {task_completions}")
         
         time.sleep(0.1)  # Small delay between iterations
     
     # Stop the robot at the end
     rob.move(0, 0)
     
-    if isinstance(rob, SimulationRobobo):
-        print(f"\nDemo completed! Food collected: {rob.get_nr_food_collected()}")
-    else:
-        print("\nDemo completed!")
-    
+    print(f"\nDemo completed! Task completions: {task_completions}")
     print("===== DEMO ENDED =====")
+
+
+def test_object_vision_system(rob: IRobobo):
+    """Test the computer vision system for object and target detection
+    
+    This function tests the ObjectPushVisionProcessor to ensure it can properly
+    detect red objects and green targets in the camera feed.
+    
+    Args:
+        rob: Robot interface (SimulationRobobo or HardwareRobobo)
+    """
+    print("\n===== TESTING OBJECT VISION SYSTEM =====")
+    
+    # Initialize vision processor
+    vision_processor = ObjectPushVisionProcessor(debug_mode=True)
+    
+    print("Capturing camera images and testing detection...")
+    
+    for i in range(10):
+        print(f"\nFrame {i+1}/10:")
+        
+        # Get camera image
+        image = rob.read_image_front()
+        
+        if image is None:
+            print("Failed to capture image")
+            continue
+        
+        # Test object and target detection
+        object_target_info = vision_processor.get_object_target_relationship(image)
+        
+        print(f"  Red objects: {object_target_info['red_objects_found']}")
+        print(f"  Green targets: {object_target_info['green_targets_found']}")
+        
+        if object_target_info['red_objects_found']:
+            print(f"  Red object at ({object_target_info['red_center_x']:.2f}, {object_target_info['red_center_y']:.2f})")
+            print(f"  Red object size: {object_target_info['red_size']:.3f}")
+        
+        if object_target_info['green_targets_found']:
+            print(f"  Green target at ({object_target_info['green_center_x']:.2f}, {object_target_info['green_center_y']:.2f})")
+            print(f"  Green target size: {object_target_info['green_size']:.3f}")
+        
+        if object_target_info['red_objects_found'] and object_target_info['green_targets_found']:
+            distance = abs(object_target_info['red_center_x'] - object_target_info['green_center_x'])
+            print(f"  Object-target distance: {distance:.3f}")
+        
+        # Save debug images
+        if isinstance(rob, SimulationRobobo):
+            filename = f"results/figures/vision_test_frame_{i+1}.png"
+            cv2.imwrite(filename, image)
+        
+        # Small rotation to get different views
+        rob.move(-5, 5)
+        time.sleep(0.5)
+        rob.move(0, 0)
+        time.sleep(0.5)
+    
+    rob.move(0, 0)  # Stop
+    print("\n===== VISION SYSTEM TESTING COMPLETE =====")
+
+
+def plot_task3_training_progress(results, agent_type='dqn'):
+    """Plot and visualize training progress for Task 3 (Object Pushing)
+    
+    This function creates visualizations of the training progress including:
+    - Episode rewards
+    - Moving average rewards
+    - Task completion statistics
+    - Exploration rate decay
+    
+    Args:
+        results: Dictionary containing training results
+        agent_type: Type of RL agent used ('dqn', 'qlearning', etc.)
+        
+    Returns:
+        Path to the saved plot file
+    """
+    from datetime import datetime
+    
+    
+    # Generate timestamp for unique filename
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    
+    # Call the internal plotting function with Task 3 naming
+    return _plot_task3_training_results(results, agent_type, timestamp)
 
 
 def _plot_training_results(results, agent_type, timestamp):
     """Plot and save training results from RL runs"""
-    import matplotlib.pyplot as plt
-    import numpy as np
     from pathlib import Path
-    import os
     
     # Create plots directory if it doesn't exist
     plots_dir = Path("results/figures")
     plots_dir.mkdir(parents=True, exist_ok=True)
     
     # Generate plot file name with timestamp
-    file_name = f"task2_{agent_type}_training_{timestamp}.png"
+    file_name = f"task3_{agent_type}_training_{timestamp}.png"
     file_path = plots_dir / file_name
     
     # Check if results contains the required data
@@ -1518,13 +2226,13 @@ def _plot_training_results(results, agent_type, timestamp):
         plt.ylabel('Average Reward')
         plt.grid(True)
     
-    # Plot food collection stats if available
-    if 'food_collected' in results:
+    # Plot task completion stats if available
+    if 'episode_task_completions' in results:
         plt.subplot(2, 2, 3)
-        plt.plot(episodes, results['food_collected'], 'g-')
-        plt.title('Food Items Collected')
+        plt.plot(episodes, results['episode_task_completions'], 'g-')
+        plt.title('Task Completions')
         plt.xlabel('Episode')
-        plt.ylabel('Number of Items')
+        plt.ylabel('Number of Completions')
         plt.grid(True)
     
     # Plot exploration rate or other metric if available
@@ -1544,26 +2252,7 @@ def _plot_training_results(results, agent_type, timestamp):
     return file_path
 
 
-def plot_task2_training_progress(results, agent_type='dqn'):
-    """Plot and visualize training progress for Task 2 (Food Collection)
-    
-    This function creates visualizations of the training progress including:
-    - Episode rewards
-    - Moving average rewards
-    - Food collection statistics
-    - Exploration rate decay
-    
-    Args:
-        results: Dictionary containing training results
-        agent_type: Type of RL agent used ('dqn', 'qlearning', etc.)
-        
-    Returns:
-        Path to the saved plot file
-    """
-    from datetime import datetime
-    
-    # Generate timestamp for unique filename
-    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    
-    # Call the internal plotting function
+def _plot_task3_training_results(results, agent_type, timestamp):
+    """Plot and save Task 3 training results from RL runs"""
+    # Use the same plotting function but ensure Task 3 naming
     return _plot_training_results(results, agent_type, timestamp)

@@ -1,4 +1,6 @@
 """
+Q-Learning Agent for Task 3: Object Pushing
+============================================
 Q-Learning Agent for Task 2: Green Food Collection
 =================================================
 
@@ -15,7 +17,7 @@ from typing import Tuple
 
 
 class QLearningAgent:
-    """Q-Learning agent with discretized state space for Task 2"""
+    """Q-Learning agent with discretized state space for Task 3"""
     
     def __init__(self, state_size: int, action_size: int, learning_rate: float = 0.1, 
                  epsilon: float = 1.0, epsilon_decay: float = 0.995, epsilon_min: float = 0.01,

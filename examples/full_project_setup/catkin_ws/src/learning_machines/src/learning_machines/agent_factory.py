@@ -110,7 +110,7 @@ def get_default_hyperparameters(agent_type: str) -> dict:
             'epsilon': 1.0,           # Start with full exploration
             'epsilon_decay': 0.95,  # Slower decay for better exploration
             'epsilon_min': 0.05,      # Higher minimum for continued exploration
-            'gamma': 0.20,            # Higher discount for long-term rewards
+            'gamma': 0.99,            # Higher discount for long-term rewards
             'memory_size': 50000,     # Larger buffer for diverse experiences
             'batch_size': 64,         # Larger batches for stable learning
             'target_update_freq': 100 # Less frequent updates for stability

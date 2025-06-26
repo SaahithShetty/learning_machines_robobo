@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-RL Controller for Task 2 - Green Food Collection
-Demonstrates all 4 reinforcement learning approaches for food collection using computer vision
+RL Controller for Task 3 - Object Pushing
+Demonstrates all 4 reinforcement learning approaches for object pushing using computer vision
 """
 
 import sys
@@ -9,10 +9,10 @@ import argparse
 from pathlib import Path
 
 from robobo_interface import SimulationRobobo, HardwareRobobo
-from test_actions import green_food_collection_task2
+from test_actions import object_pushing_task3
 
 def main():
-    parser = argparse.ArgumentParser(description='RL-based Task 2: Green Food Collection')
+    parser = argparse.ArgumentParser(description='RL-based Task 3: Object Pushing')
     parser.add_argument('--hardware', action='store_true', help='Run on hardware')
     parser.add_argument('--simulation', action='store_true', help='Run on simulation (default)')
     
@@ -51,17 +51,17 @@ def main():
         if args.demo_all:
             # Demo all 4 RL methods with short training
             print("\n" + "="*80)
-            print("DEMO: ALL 4 REINFORCEMENT LEARNING METHODS - TASK 2: GREEN FOOD COLLECTION")
+            print("DEMO: ALL 4 REINFORCEMENT LEARNING METHODS - TASK 3: OBJECT PUSHING")
             print("="*80)
             
             methods = ['qlearning', 'dqn', 'policy_gradient', 'actor_critic']
             demo_episodes = 20  # Short demo episodes
             
             for i, method in enumerate(methods, 1):
-                print(f"\n[{i}/4] Training {method.upper()} agent for food collection...")
+                print(f"\n[{i}/4] Training {method.upper()} agent for object pushing...")
                 
                 try:
-                    results = green_food_collection_task2(
+                    results = object_pushing_task3(
                         rob, 
                         agent_type=method, 
                         mode='train',
@@ -83,10 +83,10 @@ def main():
             print("="*80)
         
         elif args.rl:
-            # Run single RL method for food collection
-            print(f"\nRunning RL-based food collection with {args.agent.upper()}")
+            # Run single RL method for object pushing
+            print(f"\nRunning RL-based object pushing with {args.agent.upper()}")
             
-            results = green_food_collection_task2(
+            results = object_pushing_task3(
                 rob,
                 agent_type=args.agent,
                 mode=args.mode,
@@ -97,10 +97,10 @@ def main():
             print(f"Final results: {results}")
             
         else:
-            # Run demo without RL (basic food collection test)
-            print("\nRunning basic food collection test (no RL)")
-            from test_actions import test_task2_capabilities
-            test_task2_capabilities(rob)
+            # Run demo without RL (basic object pushing test)
+            print("\nRunning basic object pushing test (no RL)")
+            from test_actions import test_task3_capabilities
+            test_task3_capabilities(rob)
             
     except KeyboardInterrupt:
         print("\nInterrupted by user")

@@ -1,9 +1,9 @@
 """
-Deep Q-Network (DQN) Agent for Task 2: Green Food Collection
-============================================================
+Deep Q-Network (DQN) Agent for Task 3: Object Pushing
+======================================================
 
 This module implements the DQN agent and neural network architecture
-optimized for the green food collection task.
+optimized for the object pushing to target location task.
 
 Components:
 - DQNNetwork: Neural network architecture for Q-value approximation
@@ -42,7 +42,7 @@ class DQNNetwork(nn.Module):
 
 
 class DQNAgent:
-    """Deep Q-Network agent for Task 2: Green Food Collection"""
+    """Deep Q-Network agent for Task 3: Object Pushing"""
     
     def __init__(self, state_size: int, action_size: int, learning_rate: float = 0.001,
                  epsilon: float = 1.0, epsilon_decay: float = 0.995, epsilon_min: float = 0.01,

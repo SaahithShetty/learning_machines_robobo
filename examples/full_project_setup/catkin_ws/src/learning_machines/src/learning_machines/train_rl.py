@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Unified RL Training Script for Task 2 - Green Food Collection
+Unified RL Training Script for Task 3 - Object Pushing to Target
 
 This script trains any RL agent (Q-Learning, DQN, Policy Gradient, Actor-Critic) 
-for green food collection using computer vision and reinforcement learning.
+for object pushing to target using computer vision and reinforcement learning.
 
 Usage:
     python train_rl.py --simulation --method dqn --episodes 100
@@ -31,8 +31,8 @@ sys.path.append('/root/catkin_ws/src/learning_machines/src')
 from learning_machines.test_actions import (
     SimulationRobobo, 
     HardwareRobobo,
-    green_food_collection_task2,
-    test_task2_capabilities
+    object_pushing_task3,
+    test_task3_capabilities
 )
 from learning_machines.agent_factory import get_default_hyperparameters
 from data_files import FIGURES_DIR
@@ -52,7 +52,7 @@ def parse_arguments():
     
     # Main parser with dynamic defaults
     parser = argparse.ArgumentParser(
-        description='Train RL agent for green food collection',
+        description='Train RL agent for object pushing to target',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -103,7 +103,9 @@ Examples:
     
     # Hardware/Simulation specific parameters
     parser.add_argument('--collision-threshold', type=float, default=None,
-                       help='IR sensor collision threshold (default: 0.05 for simulation, 20.0 for hardware)')
+                       help='IR sensor collision threshold (default: 0.95 for both simulation and hardware)')
+    parser.add_argument('--max-episode-time', type=int, default=300,
+                       help='Maximum episode time in seconds (default: 300 for Task 3)')
     
     # DQN-specific parameters - using agent_factory defaults
     parser.add_argument('--memory-size', type=int, default=defaults.get('memory_size', 10000),
@@ -148,22 +150,31 @@ def validate_args(args):
 def print_config(args):
     """Print training configuration"""
     print("=" * 80)
-    print(f"RL TRAINING - TASK 2: GREEN FOOD COLLECTION")
+    print(f"RL TRAINING - TASK 3: OBJECT PUSHING TO TARGET")
     print("=" * 80)
     print(f"Method: {args.method.upper()}")
     print(f"Platform: {'Simulation (CoppeliaSim)' if args.simulation else 'Hardware Robot'}")
     print(f"Mode: {args.mode}")
     print(f"Episodes: {args.episodes}")
-    print(f"Episode duration: 3 minutes (180 seconds) - Task 2 time limit")
+    print(f"Episode duration: {args.max_episode_time} seconds - Task 3 time limit")
     
     # Show collision threshold info
     if args.collision_threshold is not None:
         threshold_info = f"Custom: {args.collision_threshold}"
     else:
-        threshold_info = f"Auto: {0.05 if args.simulation else 20.0} ({'simulation' if args.simulation else 'hardware'} default)"
+        threshold_info = f"Auto: 0.95 (unified for simulation and hardware)"
     print(f"Collision threshold: {threshold_info}")
     
     print(f"Results directory: {FIGURES_DIR}")
+    print()
+    
+    print("Task 3 Specifics:")
+    print("  - Robot must push a red object to a green target")
+    print("  - Sequential phases: SEARCH -> COLLECT -> SEARCH_TARGET -> PUSH -> COMPLETE")
+    print("  - Frontal collision required for object collection")
+    print("  - Backward movement penalty during dragging phase")
+    print("  - 14D state space: [8 IR sensors + 6 vision features]")
+    print("  - 8 discrete actions optimized for pushing")
     print()
     
     print("Hyperparameters:")
@@ -227,29 +238,38 @@ def main():
         # Handle test capabilities mode
         if args.mode == 'test_capabilities':
             print(f"\nRunning capability tests on {'simulation' if args.simulation else 'hardware'}...")
-            test_task2_capabilities(rob)
+            test_task3_capabilities(rob)
             return
         
         # Start training
-        print(f"\nStarting {args.method.upper()} training for green food collection...")
+        print(f"\nStarting {args.method.upper()} training for object pushing to target...")
         
-        # Prepare training arguments for Task 2
+        # Prepare training arguments for Task 3
         rl_kwargs = {
             'rob': rob,
             'agent_type': args.method,
-            'mode': args.mode,
-            'num_episodes': args.episodes
+            'num_episodes': args.episodes,
+            'max_episode_time': args.max_episode_time,  # Task 3: 5 minutes
+            'learning_rate': args.learning_rate,
+            'gamma': args.gamma,
+            'epsilon': args.epsilon,
+            'epsilon_decay': args.epsilon_decay,
+            'epsilon_min': args.epsilon_min,
+            'save_freq': args.save_freq,
+            'load_model_path': args.load_model,
+            'save_model_path': args.save_model,
+            'mode': args.mode
         }
         
-        # Set collision threshold based on platform
+        # Set collision threshold based on platform (unified for Task 3)
         if args.collision_threshold is not None:
             collision_threshold = args.collision_threshold
         else:
-            # Auto-detect threshold based on platform
-            collision_threshold = 0.05 if args.simulation else 20.0
+            # Task 3 uses unified collision threshold
+            collision_threshold = 0.95
         
         rl_kwargs['collision_threshold'] = collision_threshold
-        print(f"Using collision threshold: {collision_threshold} ({'simulation' if args.simulation else 'hardware'} default)")
+        print(f"Using collision threshold: {collision_threshold} (unified for Task 3)")
         
         # Add model path for evaluation mode
         if args.load_model is not None:
@@ -268,7 +288,7 @@ def main():
             print(f"Model path conversion: {original_path} -> {model_path}")
             rl_kwargs['model_path'] = model_path
         
-        results = green_food_collection_task2(**rl_kwargs)
+        results = object_pushing_task3(**rl_kwargs)
         
         print("\n" + "=" * 80)
         print("TRAINING COMPLETED SUCCESSFULLY!")
@@ -281,9 +301,9 @@ def main():
                 print_evaluation_summary(results, args.method)
             elif args.mode == 'train_and_evaluate':
                 print_training_summary(results, args.method)
-                # Note: eval metrics would be separate if implemented
-                print_training_summary(training_metrics, args.method)
-                print_evaluation_summary(eval_metrics, args.method)
+                # Note: separate eval metrics would be in results if implemented
+                if 'eval_metrics' in results:
+                    print_evaluation_summary(results['eval_metrics'], args.method)
             
             print(f"\nResults saved to: {FIGURES_DIR}")
             print_saved_files(args.method)
@@ -302,49 +322,47 @@ def main():
             rospy.signal_shutdown("Training completed")
 
 def print_training_summary(metrics, method):
-    """Print training statistics summary for food collection"""
-    print(f"\nTraining Summary ({method.upper()}) - Green Food Collection:")
+    """Print training statistics summary for object pushing"""
+    print(f"\nTraining Summary ({method.upper()}) - Object Pushing to Target:")
     print(f"  Total episodes: {len(metrics['episode_rewards'])}")
     
     if metrics['episode_rewards']:
+        average_reward = sum(metrics['episode_rewards']) / len(metrics['episode_rewards'])
+        print(f"  Average reward: {average_reward:.2f}")
         last_20_avg = sum(metrics['episode_rewards'][-20:]) / min(20, len(metrics['episode_rewards']))
         print(f"  Average reward (last 20 episodes): {last_20_avg:.2f}")
         print(f"  Best episode reward: {max(metrics['episode_rewards']):.2f}")
         print(f"  Worst episode reward: {min(metrics['episode_rewards']):.2f}")
     
-    # Task 2 specific metrics
-    if 'episode_food_collected' in metrics:
-        avg_food = sum(metrics['episode_food_collected']) / len(metrics['episode_food_collected'])
-        print(f"  Average foods collected per episode: {avg_food:.1f}/7")
-        
-    if 'success_rate' in metrics:
-        success_rate = metrics['success_rate'][-1] if metrics['success_rate'] else 0
-        print(f"  Success rate (7 foods collected): {success_rate:.1%}")
+    # Task 3 specific metrics
+    if 'episode_task_completed' in metrics:
+        completed_count = sum(metrics['episode_task_completed'])
+        success_rate = completed_count / len(metrics['episode_task_completed'])
+        print(f"  Tasks completed: {completed_count}/{len(metrics['episode_task_completed'])}")
+        print(f"  Success rate (object pushed to target): {success_rate:.1%}")
     
     if 'episode_times' in metrics:
         avg_time = sum(metrics['episode_times']) / len(metrics['episode_times'])
         print(f"  Average completion time: {avg_time:.1f} seconds")
 
 def print_evaluation_summary(results, method):
-    """Print evaluation statistics summary for food collection"""
-    print(f"\nEvaluation Summary ({method.upper()}) - Green Food Collection:")
+    """Print evaluation statistics summary for object pushing"""
+    print(f"\nEvaluation Summary ({method.upper()}) - Object Pushing to Target:")
     
-    # Handle the results dictionary structure from green_food_collection_task2
+    # Handle the results dictionary structure from object_pushing_task3
     if 'episode_rewards' in results and results['episode_rewards']:
         average_reward = sum(results['episode_rewards']) / len(results['episode_rewards'])
         print(f"  Average reward: {average_reward:.2f}")
     
-    if 'episode_success_rates' in results and results['episode_success_rates']:
-        success_rate = sum(results['episode_success_rates']) / len(results['episode_success_rates'])
-        print(f"  Success rate (7 foods collected): {success_rate:.1%}")
-    
-    if 'episode_foods_collected' in results and results['episode_foods_collected']:
-        avg_foods = sum(results['episode_foods_collected']) / len(results['episode_foods_collected'])
-        print(f"  Average foods collected: {avg_foods:.1f}/7")
+    if 'episode_task_completed' in results and results['episode_task_completed']:
+        completed_count = sum(results['episode_task_completed'])
+        success_rate = completed_count / len(results['episode_task_completed'])
+        print(f"  Tasks completed: {completed_count}/{len(results['episode_task_completed'])}")
+        print(f"  Task completion rate: {success_rate:.1%}")
     
     if 'episode_lengths' in results and results['episode_lengths']:
-        avg_time = sum(results['episode_lengths']) / len(results['episode_lengths'])
-        print(f"  Average episode length: {avg_time:.1f} steps")
+        avg_length = sum(results['episode_lengths']) / len(results['episode_lengths'])
+        print(f"  Average episode length: {avg_length:.1f} steps")
 
 def print_saved_files(method):
     """Print information about saved files"""

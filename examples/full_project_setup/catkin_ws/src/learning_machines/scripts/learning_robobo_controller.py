@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-Learning Robobo Controller for Task 2: Green Food Collection
-============================================================
+Learning Robobo Controller for Task 3: Object Pushing
+======================================================
 
-Main controller script for running Task 2 (Green Food Collection) with different
+Main controller script for running Task 3 (Object Pushing to Target Location) with different
 RL methods and modes. This script provides a simple interface for training and
-evaluating RL agents for green food collection.
+evaluating RL agents for object pushing tasks.
 
 Usage:
     python learning_robobo_controller.py --simulation [--method dqn] [--episodes 100]
@@ -18,15 +18,15 @@ import argparse
 from learning_machines.test_actions import SimulationRobobo, HardwareRobobo
 from learning_machines import (
     run_all_actions,
-    green_food_collection_task2,
-    test_task2_capabilities,
-    demo_task2_food_collection
+    object_pushing_task3,
+    test_task3_capabilities,
+    demo_task3_object_pushing
 )
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Learning Robobo Controller for Task 2: Green Food Collection'
+        description='Learning Robobo Controller for Task 3: Object Pushing'
     )
     
     # Platform selection (required)
@@ -47,8 +47,8 @@ def main():
                        default='train', help='Training mode (default: train)')
     
     # Task selection
-    parser.add_argument('--task', choices=['food_collection', 'test_capabilities', 'demo'],
-                       default='food_collection', help='Task to run (default: food_collection)')
+    parser.add_argument('--task', choices=['object_pushing', 'test_capabilities', 'demo'],
+                       default='object_pushing', help='Task to run (default: object_pushing)')
     
     args = parser.parse_args()
     
@@ -61,15 +61,15 @@ def main():
         rob = SimulationRobobo()
     
     try:
-        print(f"🎯 Running Task 2: Green Food Collection")
+        print(f"🎯 Running Task 3: Object Pushing")
         print(f"Platform: {'Hardware' if args.hardware else 'Simulation'}")
         print(f"Method: {args.method.upper()}")
         print(f"Episodes: {args.episodes}")
         print(f"Mode: {args.mode}")
         print("="*60)
         
-        if args.task == 'food_collection':
-            # Main food collection task
+        if args.task == 'object_pushing':
+            # Main object pushing task
             results = run_all_actions(
                 rob=rob,
                 rl_agent_type=args.method,
@@ -77,17 +77,17 @@ def main():
                 rl_episodes=args.episodes
             )
             
-            print(f"\n✅ Task 2 completed successfully!")
+            print(f"\n✅ Task 3 completed successfully!")
             if 'success_rate' in results:
                 print(f"Success Rate: {results.get('success_rate', 0):.1%}")
             
         elif args.task == 'test_capabilities':
             # Test system capabilities
-            test_task2_capabilities(rob)
+            test_task3_capabilities(rob)
             
         elif args.task == 'demo':
             # Quick demo
-            demo_task2_food_collection(rob)
+            demo_task3_object_pushing(rob)
             
     except KeyboardInterrupt:
         print("\n⚠️ Interrupted by user")

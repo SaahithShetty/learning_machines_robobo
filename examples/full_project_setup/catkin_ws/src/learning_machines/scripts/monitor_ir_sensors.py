@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-IR Sensor Monitor for Task 2: Green Food Collection
-===================================================
+IR Sensor Monitor for Task 3: Object Pushing
+=============================================
 
 Monitor IR sensor values in real-time to help with debugging robot navigation
-and obstacle avoidance during food collection tasks.
+and obstacle avoidance during object pushing tasks.
 
 This utility displays:
 - Real-time IR sensor readings

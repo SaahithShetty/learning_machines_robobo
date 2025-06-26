@@ -1,4 +1,6 @@
 """
+Policy Gradient (REINFORCE) Agent for Task 3: Object Pushing
+=============================================================
 Policy Gradient (REINFORCE) Agent for Task 2: Green Food Collection
 ===================================================================
 
@@ -63,7 +65,7 @@ class PolicyNetwork(nn.Module):
 
 
 class PolicyGradientAgent:
-    """REINFORCE Policy Gradient agent for Task 2"""
+    """REINFORCE Policy Gradient agent for Task 3"""
     
     def __init__(self, state_size: int, action_size: int, learning_rate: float = 0.001,
                  gamma: float = 0.95):

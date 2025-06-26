@@ -7,23 +7,23 @@ show_usage() {
     echo "Usage: $0 [COMMAND] [OPTIONS]"
     echo ""
     echo "Commands:"
-    echo "  train <method> [args...]     - Train RL agent for Task 2 (simulation)"
-    echo "  train-hw <method> [args...]  - Train RL agent for Task 2 (hardware)"
+    echo "  train <method> [args...]     - Train RL agent for Task 3 (simulation)"
+    echo "  train-hw <method> [args...]  - Train RL agent for Task 3 (hardware)"
     echo "  test <method> [args...]      - Test/evaluate RL agent (simulation)"
     echo "  test-hw <method> [args...]   - Test/evaluate RL agent (hardware)"
-    echo "  task2 [args...]              - Run Task 2 controller directly"
+    echo "  task3 [args...]              - Run Task 3 controller directly"
     echo "  monitor [args...]            - Monitor IR sensors for debugging"
     echo "  run [args...]                - Run custom command"
     echo "  rebuild                      - Force rebuild Docker image"
     echo "  skip-build <command>         - Skip build and run command"
     echo ""
-    echo "RL Methods (Task 2: Green Food Collection):"
+    echo "RL Methods (Task 3: Object Pushing):"
     echo "  dqn                      - Deep Q-Network (recommended)"
     echo "  qlearning                - Q-Learning (tabular)"
     echo "  policy_gradient          - Policy Gradient (REINFORCE)"
     echo "  actor_critic             - Actor-Critic (A2C)"
     echo ""
-    echo "Examples (Task 2: Green Food Collection):"
+    echo "Examples (Task 3: Object Pushing):"
     echo "  $0 train dqn --episodes 100"
     echo "  $0 train-hw dqn --episodes 50 --mode train_and_evaluate"
     echo "  $0 test dqn --episodes 10 --load-model /root/results/rl_model_dqn_*.pth"
@@ -35,8 +35,8 @@ show_usage() {
     echo "  $0 train dqn --episodes 50 --collision-threshold 0.95  # Custom threshold"
     echo "  $0 train dqn --episodes 50 --use-thresholds  # Legacy threshold mode (NOT recommended)"
     echo ""
-    echo "Direct Task 2 access:"
-    echo "  $0 task2 --simulation --method dqn --episodes 50"
+    echo "Direct Task 3 access:"
+    echo "  $0 task3 --simulation --method dqn --episodes 50"
     echo "  $0 monitor --simulation  # Monitor IR sensors"
     echo ""
     echo "Custom commands:"
@@ -72,7 +72,7 @@ case $COMMAND in
         # Validate RL method
         case $METHOD in
             dqn|qlearning|policy_gradient|actor_critic)
-                echo "Training $METHOD agent for Task 2 (simulation) with arguments: $TRAINING_ARGS"
+                echo "Training $METHOD agent for Task 3 (simulation) with arguments: $TRAINING_ARGS"
                 DOCKER_CMD="python3 /root/catkin_ws/src/learning_machines/scripts/train_rl.py --simulation --method $METHOD $TRAINING_ARGS"
                 ;;
             *)
@@ -97,7 +97,7 @@ case $COMMAND in
         # Validate RL method
         case $METHOD in
             dqn|qlearning|policy_gradient|actor_critic)
-                echo "Training $METHOD agent for Task 2 (hardware) with arguments: $TRAINING_ARGS"
+                echo "Training $METHOD agent for Task 3 (hardware) with arguments: $TRAINING_ARGS"
                 DOCKER_CMD="python3 /root/catkin_ws/src/learning_machines/scripts/train_rl.py --hardware --method $METHOD $TRAINING_ARGS"
                 ;;
             *)
@@ -122,7 +122,7 @@ case $COMMAND in
         # Validate RL method
         case $METHOD in
             dqn|qlearning|policy_gradient|actor_critic)
-                echo "Testing $METHOD agent for Task 2 (simulation) with arguments: $TEST_ARGS"
+                echo "Testing $METHOD agent for Task 3 (simulation) with arguments: $TEST_ARGS"
                 DOCKER_CMD="python3 /root/catkin_ws/src/learning_machines/scripts/train_rl.py --simulation --method $METHOD --mode evaluate $TEST_ARGS"
                 ;;
             *)
@@ -147,7 +147,7 @@ case $COMMAND in
         # Validate RL method
         case $METHOD in
             dqn|qlearning|policy_gradient|actor_critic)
-                echo "Testing $METHOD agent for Task 2 (hardware) with arguments: $TEST_ARGS"
+                echo "Testing $METHOD agent for Task 3 (hardware) with arguments: $TEST_ARGS"
                 DOCKER_CMD="python3 /root/catkin_ws/src/learning_machines/scripts/train_rl.py --hardware --method $METHOD --mode evaluate $TEST_ARGS"
                 ;;
             *)
@@ -157,11 +157,11 @@ case $COMMAND in
                 ;;
         esac
         ;;
-    task2)
-        # Direct access to Task 2 controller
-        TASK2_ARGS="$@"
-        echo "Running Task 2 controller with arguments: $TASK2_ARGS"
-        DOCKER_CMD="python3 /root/catkin_ws/src/learning_machines/scripts/learning_robobo_controller.py $TASK2_ARGS"
+    task3)
+        # Direct access to Task 3 controller
+        TASK3_ARGS="$@"
+        echo "Running Task 3 controller with arguments: $TASK3_ARGS"
+        DOCKER_CMD="python3 /root/catkin_ws/src/learning_machines/scripts/task3_controller.py $TASK3_ARGS"
         ;;
     monitor)
         # Monitor IR sensors for debugging
@@ -204,8 +204,8 @@ else
     echo "Skipping build (using existing image)..."
 fi
 
-# Run the container with Task 2 environment (green food collection)
-echo "Starting Docker container for Task 2: Green Food Collection..."
+# Run the container with Task 3 environment (object pushing)
+echo "Starting Docker container for Task 3: Object Pushing..."
 docker run -it --rm --platform linux/amd64 \
     -p 45100:45100 -p 45101:45101 \
     -v "$(pwd)/results:/root/results" \
