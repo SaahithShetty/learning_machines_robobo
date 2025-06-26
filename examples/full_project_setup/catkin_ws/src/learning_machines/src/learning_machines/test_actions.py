@@ -780,7 +780,6 @@ class RobotEnvironment:
                     red_objects, green_targets, processed_frame = self.vision_processor.detect_objects_and_target(camera_frame)
                     
                     # Save both original and processed
-                    import cv2
                     cv2.imwrite(str(filepath), camera_frame)
                     if processed_frame is not None:
                         processed_filepath = self.images_dir / f"DEBUG_phase0_step{self.step_count}_PROCESSED.jpg"
@@ -806,23 +805,50 @@ class RobotEnvironment:
             try:
                 camera_frame = self.robot.read_image_front()
                 if camera_frame is not None and hasattr(self, 'images_dir'):
-                    # Save original camera frame
-                    debug_filename = f"DEBUG_PHASE0_DETECTION_step{self.step_count}_obj{object_detected:.2f}_angle{object_angle:.3f}_dist{object_distance:.3f}.jpg"
+                    # Apply image correction for reversed phone camera
+                    # Phone is upside down, so flip both horizontally and vertically
+                    corrected_frame = cv2.flip(camera_frame, -1)  # -1 = flip both axes (180° rotation)
+                    
+                    # Save original camera frame (uncorrected)
+                    debug_filename = f"HARDWARE_PHASE0_DETECTION_step{self.step_count}_obj{object_detected:.2f}_angle{object_angle:.3f}_dist{object_distance:.3f}_ORIGINAL.jpg"
                     debug_filepath = self.images_dir / debug_filename
                     cv2.imwrite(str(debug_filepath), camera_frame)
                     
-                    # Save processed frame with detection overlay
-                    red_objects, green_targets, processed_frame = self.vision_processor.detect_objects_and_target(camera_frame)
-                    if processed_frame is not None:
-                        processed_filename = f"DEBUG_PHASE0_PROCESSED_step{self.step_count}_redboxes{len(red_objects)}.jpg"
+                    # Save corrected camera frame
+                    corrected_filename = f"HARDWARE_PHASE0_DETECTION_step{self.step_count}_obj{object_detected:.2f}_angle{object_angle:.3f}_dist{object_distance:.3f}_CORRECTED.jpg"
+                    corrected_filepath = self.images_dir / corrected_filename
+                    cv2.imwrite(str(corrected_filepath), corrected_frame)
+                    
+                    # Get and save processed detection overlay
+                    try:
+                        object_target_info = self.vision_processor.get_object_target_info_dict(corrected_frame)
+                        processed_frame = corrected_frame.copy()
+                        
+                        # Draw detection results on frame
+                        if object_target_info.get('red_objects_found', False):
+                            red_x = object_target_info.get('red_center_x', 0.5)
+                            red_y = object_target_info.get('red_center_y', 0.5)
+                            h, w = processed_frame.shape[:2]
+                            center_x = int(red_x * w)
+                            center_y = int(red_y * h)
+                            
+                            # Draw red circle at detected object center
+                            cv2.circle(processed_frame, (center_x, center_y), 20, (0, 0, 255), 3)
+                            cv2.putText(processed_frame, f"RED: ({red_x:.2f},{red_y:.2f})", 
+                                      (center_x + 25, center_y), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+                        
+                        # Save processed frame with overlay
+                        processed_filename = f"HARDWARE_PHASE0_DETECTION_step{self.step_count}_obj{object_detected:.2f}_angle{object_angle:.3f}_dist{object_distance:.3f}_PROCESSED.jpg"
                         processed_filepath = self.images_dir / processed_filename
                         cv2.imwrite(str(processed_filepath), processed_frame)
-                    
-                    print(f"🔍 DEBUG: Red object detected! Saved images: {debug_filename}")
-                    print(f"    Object data: detected={object_detected:.3f}, angle={object_angle:.3f}, distance={object_distance:.3f}")
-                    print(f"    Raw detections: {len(red_objects)} red objects, {len(green_targets)} green targets")
+                        
+                        print(f"HARDWARE DEBUG - Saved detection images: {debug_filename}, {corrected_filename}, {processed_filename}")
+                        
+                    except Exception as e:
+                        print(f"HARDWARE DEBUG - Failed to create processed overlay: {e}")
+                        
             except Exception as e:
-                print(f"DEBUG: Failed to save detection image: {e}")
+                print(f"HARDWARE DEBUG - Failed to save detection image: {e}")
             
             # Transition if well centered and close enough
             if abs_angle <= 0.17 and object_distance <= 0.5:
@@ -834,20 +860,9 @@ class RobotEnvironment:
                 self._transition_to_phase(1, f"Object well centered (angle={object_angle:.3f}) - transition to prevent overshooting")
         else:
             info['object_in_view'] = False
-            # 2. IR-Based Detection (if not visible in camera) - Use only FrontC sensor
-            if front_center_ir < 0.02:  # IR triggered, possible object
-                reward += 4.0
-                info['object_detected_by_ir'] = True
-                
-                # Transition to Phase 1 if object detected by IR sensors
-                # This handles cases where object is close but not visible in camera
-                if front_center_ir < 0.02:  # Object very close via IR (20mm)
-                    info['phase_transition_ready'] = True
-                    self._transition_to_phase(1, f"Object detected by FrontC IR sensor (FrontC_IR={front_center_ir:.3f}) - ready for collection")
-            else:
-                info['object_detected_by_ir'] = False
+            
         # Encourage systematic exploration if nothing detected
-        if not info['object_in_view'] and not info['object_detected_by_ir']:
+        if not info['object_in_view']:
             # All actions in Phase 0 are right turns, so encourage systematic scanning
             reward += 2.0  # Base turning reward for systematic search
         else:
@@ -863,10 +878,15 @@ class RobotEnvironment:
         return reward
 
     def _calculate_phase1_reward(self, action_idx, ir_values, vision_values, info):
-        """Phase 1: Object Collection - Move straight, use raw IR history for robust transition"""
+        """Phase 1: Object Collection - Move straight, use vision + IR for robust transition"""
         reward = 0.0
         
-        # Get raw IR values directly from robot
+        # Extract vision data for transition detection
+        object_detected = vision_values[0]    # Binary: red object visible
+        object_distance = vision_values[1]    # Normalized distance [0,1]
+        object_angle = vision_values[2]       # Normalized angle [-1,1]
+        
+        # Get raw IR values directly from robot for backup detection
         raw_ir_values = self.robot.read_irs()
         front_center_ir_intensity = raw_ir_values[4]  # Raw intensity from FrontC sensor
         
@@ -881,34 +901,106 @@ class RobotEnvironment:
         
         # Debug output for Phase 1 collection issues
         if self.step_count <= 20 or self.step_count % 10 == 0:
-            print(f"  Phase 1 Debug - Distance={front_center_distance_mm:.1f}mm, Raw_IR={front_center_ir_intensity:.6f}")
-            print(f"  Phase 1 Debug - Close_readings={close_readings_count}/{len(self.front_ir_history)}, Need={self.required_close_readings} for transition")
+            print(f"  Phase 1 Debug - Vision: detected={object_detected:.3f}, distance={object_distance:.3f}, angle={object_angle:.3f}")
+            print(f"  Phase 1 Debug - IR: Distance={front_center_distance_mm:.1f}mm, Raw_IR={front_center_ir_intensity:.6f}")
+            print(f"  Phase 1 Debug - Close_readings={close_readings_count}/{len(self.front_ir_history)}, Need={self.required_close_readings} for IR transition")
         
         # Reward for moving forward (all actions in Phase 1 are forward)
         if action_idx in [0,1,2,3,4,5,6,7]:
             reward += 5.0
         
-        # Progressive reward for getting closer to object
+        # Progressive reward for getting closer to object (vision-based)
+        if object_detected > 0.5:
+            # Object is visible - use vision for distance estimation
+            distance_reward = (1.0 - object_distance) * 15.0  # Higher reward for vision-based distance
+            reward += distance_reward
+            info['object_visible_in_phase1'] = True
+            
+            # Centering reward - encourage keeping object centered while approaching
+            abs_angle = abs(object_angle)
+            if abs_angle <= 0.1:  # Very well centered
+                reward += 10.0
+            elif abs_angle <= 0.2:  # Reasonably centered
+                reward += 5.0
+                
+        # Progressive reward for getting closer to object (IR-based backup)
         if front_center_distance_mm < 500:  # Within 50cm
             # Higher reward for closer distances
-            distance_reward = (500 - front_center_distance_mm) / 500.0 * 20.0
+            distance_reward = (500 - front_center_distance_mm) / 500.0 * 10.0
             reward += distance_reward
         
-        # PHASE TRANSITION: Use raw IR history approach with 6mm threshold
-        # Need 8+ readings below 6mm for reliable object contact detection
-        if close_readings_count >= self.required_close_readings:
-            reward += 100.0  # Big reward for successful collection
+        # PRIMARY PHASE TRANSITION: Vision-based position detection (corrected camera)
+        # When red box appears in bottom section of image = robot has collected it
+        if object_detected > 0.5:
+            # Get the actual object position from vision processor for position-based transition
+            try:
+                camera_frame = self.robot.read_image_front()
+                if camera_frame is not None:
+                    # Apply image correction for reversed phone camera
+                    corrected_frame = cv2.flip(camera_frame, -1)  # -1 = flip both axes (180° rotation)
+                    
+                    # Get object position info
+                    object_target_info = self.vision_processor.get_object_target_info_dict(corrected_frame)
+                    
+                    if object_target_info.get('red_objects_found', False):
+                        red_center_y = object_target_info.get('red_center_y', 0.5)  # Normalized Y position [0,1]
+                        
+                        # Bottom section check: if object is in bottom 15% of image (Y > 0.85) - tuned threshold
+                        if red_center_y > 0.85:  # Bottom section of image - robot is touching object
+                            reward += 100.0  # Big reward for successful collection via position
+                            info['collection_complete'] = True
+                            info['phase_transition_ready'] = True
+                            info['transition_method'] = 'vision_position'
+                            info['object_y_position'] = red_center_y
+                            self._transition_to_phase(2, f"Object collected via VISION POSITION - Y={red_center_y:.3f} (bottom section - robot touching) (READY FOR TARGET SEARCH)")
+                        
+                        # Progress reward for getting close to bottom
+                        elif red_center_y > 0.7:  # Bottom 30% of image - getting very close
+                            reward += 50.0
+                            info['object_very_close'] = True
+                            info['object_y_position'] = red_center_y
+                        
+                        # Progress reward for getting to bottom half
+                        elif red_center_y > 0.6:  # Bottom 40% of image - approaching
+                            reward += 20.0
+                            info['object_approaching_bottom'] = True
+                            info['object_y_position'] = red_center_y
+                            
+                        info['object_y_position'] = red_center_y
+                        
+            except Exception as e:
+                print(f"Vision position check failed: {e}")
+                # Fall back to distance-based check
+                if object_distance <= 0.15:  # Very close fallback
+                    reward += 80.0
+                    info['collection_complete'] = True
+                    info['phase_transition_ready'] = True
+                    info['transition_method'] = 'vision_distance_fallback'
+                    self._transition_to_phase(2, f"Object collected via VISION DISTANCE FALLBACK - distance={object_distance:.3f} (READY FOR TARGET SEARCH)")
+        
+        # BACKUP PHASE TRANSITION: IR-based detection (if vision completely fails)
+        elif close_readings_count >= self.required_close_readings:
+            reward += 60.0  # Lower reward for IR-based transition
             info['collection_complete'] = True
             info['phase_transition_ready'] = True
-            self._transition_to_phase(2, f"Object collected - {close_readings_count}/{len(self.front_ir_history)} readings ≤{self.phase_transition_threshold_mm}mm (READY FOR TARGET SEARCH)")
-        elif close_readings_count >= self.required_close_readings // 2:  # Half way there
-            reward += 30.0
+            info['transition_method'] = 'ir_backup'
+            self._transition_to_phase(2, f"Object collected via IR BACKUP - {close_readings_count}/{len(self.front_ir_history)} readings ≤{self.phase_transition_threshold_mm}mm (READY FOR TARGET SEARCH)")
+            
+        # Progress rewards
+        elif object_detected > 0.5 and object_distance <= 0.3:  # Getting close via vision
+            reward += 40.0
+            info['close_via_vision'] = True
+        elif close_readings_count >= self.required_close_readings // 2:  # Half way there via IR
+            reward += 20.0
             info['progress_to_collection'] = True
-        elif front_center_distance_mm <= 100.0:  # Close but not consistent
+        elif front_center_distance_mm <= 100.0:  # Close but not consistent via IR
             reward += 10.0
             info['close_to_object'] = True
             
         # Store values for debugging
+        info['object_detected_vision'] = object_detected > 0.5
+        info['object_distance_vision'] = object_distance
+        info['object_angle_vision'] = object_angle
         info['front_c_distance_mm'] = front_center_distance_mm
         info['front_c_ir_intensity'] = front_center_ir_intensity
         info['close_readings_count'] = close_readings_count
@@ -920,9 +1012,28 @@ class RobotEnvironment:
         reward = 0.0
         
         # Extract vision data
+        object_detected = vision_values[0]    # Binary: red object visible
         target_detected = vision_values[3]    # Binary: green target visible
         target_distance = vision_values[4]    # Normalized distance [0,1]
         target_angle = vision_values[5]       # Normalized angle [-1,1]
+        
+        # SAFETY CHECK: If red object is lost, fall back to Phase 0
+        if object_detected <= 0.5:
+            # Initialize loss tracking if needed
+            if not hasattr(self, 'object_loss_count'):
+                self.object_loss_count = 0
+            
+            self.object_loss_count += 1
+            
+            # Fall back to Phase 0 if object lost for several consecutive steps
+            if self.object_loss_count >= 3:  # Lost for 3 consecutive steps
+                reward += -20.0  # Penalty for losing object
+                info['object_lost_fallback'] = True
+                self._transition_to_phase(0, f"RED OBJECT LOST in Phase 2 - falling back to Phase 0 for re-detection (lost for {self.object_loss_count} steps)")
+                return reward
+        else:
+            # Reset loss counter if object is visible
+            self.object_loss_count = 0
         
         # 1. Target Detection Rewards
         if target_detected > 0.5:  # Green target is visible
@@ -1008,12 +1119,31 @@ class RobotEnvironment:
         reward = 0.0
         
         # Extract vision data
+        object_detected = vision_values[0]    # Binary: red object visible
         target_detected = vision_values[3]    # Binary: green target visible
         target_distance = vision_values[4]    # Normalized distance [0,1]
         target_angle = vision_values[5]       # Normalized angle [-1,1]
         
         # Extract front center IR for object maintenance
         front_center_ir = ir_values[4]  # FrontC
+        
+        # SAFETY CHECK: If red object is lost, fall back to Phase 0
+        if object_detected <= 0.5:
+            # Initialize loss tracking if needed
+            if not hasattr(self, 'object_loss_count_phase3'):
+                self.object_loss_count_phase3 = 0
+            
+            self.object_loss_count_phase3 += 1
+            
+            # Fall back to Phase 0 if object lost for several consecutive steps
+            if self.object_loss_count_phase3 >= 5:  # Lost for 5 consecutive steps (more lenient in Phase 3)
+                reward += -30.0  # Higher penalty for losing object in final phase
+                info['object_lost_fallback'] = True
+                self._transition_to_phase(0, f"RED OBJECT LOST in Phase 3 - falling back to Phase 0 for re-detection (lost for {self.object_loss_count_phase3} steps)")
+                return reward
+        else:
+            # Reset loss counter if object is visible
+            self.object_loss_count_phase3 = 0
         
         # 1. Forward Movement Rewards
         # Encourage only straight forward movement since alignment was done in Phase 1
@@ -1169,10 +1299,22 @@ class RobotEnvironment:
         try:
             camera_frame = self.robot.read_image_front()
             if camera_frame is None:
+                print("WARNING: Camera frame is None - hardware camera issue?")
                 return [0.0, 1.0, 0.0, 0.0, 1.0, 0.0]  # Default: nothing detected, max distance, centered
             
+            # Apply image correction for phone camera orientation (needed for both hardware and simulation)
+            corrected_frame = cv2.flip(camera_frame, -1)  # 180° rotation for reversed phone camera
+            
             # Get object-target relationship from vision processor
-            object_target_info = self.vision_processor.get_object_target_info_dict(camera_frame)
+            object_target_info = self.vision_processor.get_object_target_info_dict(corrected_frame)
+            
+            # Hardware debugging - log raw detection results
+            if self.current_phase_num == 0 and (self.step_count <= 30 or self.step_count % 20 == 0):
+                red_found = object_target_info.get('red_objects_found', False)
+                green_found = object_target_info.get('green_targets_found', False)
+                print(f"HARDWARE DEBUG - Raw detection: Red={red_found}, Green={green_found}")
+                print(f"                  Frame shape: {camera_frame.shape if camera_frame is not None else 'None'}")
+                print(f"                  Object info keys: {list(object_target_info.keys())}")
             
             # Extract red object information
             object_detected = 1.0 if object_target_info.get('red_objects_found', False) else 0.0
@@ -1888,14 +2030,14 @@ def object_pushing_task3(rob: IRobobo, agent_type: str = 'dqn', mode: str = 'tra
     # Final summary
     if results['episode_rewards']:
         avg_reward = np.mean(results['episode_rewards'])
-        avg_foods = np.mean(results['episode_foods_collected'])
+        avg_task_completions = np.mean(results['episode_task_completions'])
         final_success_rate = np.mean(results['episode_success_rates']) * 100
         
         print(f"\n📊 FINAL RESULTS:")
         print(f"   Average Reward: {avg_reward:.1f}")
-        print(f"   Average Foods Collected: {avg_foods:.1f}/7")
+        print(f"   Average Task Completions: {avg_task_completions:.1f}")
         print(f"   Success Rate: {final_success_rate:.1f}%")
-        print(f"   Best Foods Collected: {results['best_foods_collected']}/7")
+        print(f"   Best Task Completion: {results['best_task_completion']}")
     
     return results
 
@@ -1915,7 +2057,6 @@ def test_task3_capabilities(rob: IRobobo):
     """
     import time
     import numpy as np
-    import cv2
     
     print("\n===== TESTING TASK 3 CAPABILITIES =====")
     
