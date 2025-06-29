@@ -252,12 +252,12 @@ class RobotEnvironment:
     - Phase 3: Push to Target (move object to target location)
     """
     
-    def __init__(self, robot: IRobobo, vision_processor, max_episode_time: int = 300, 
+    def __init__(self, robot: IRobobo, vision_processor, max_episode_time: int = 120, 
                  collision_threshold: float = 0.95, save_images: bool = False, 
                  image_save_interval: int = 100):
         self.robot = robot
         self.vision_processor = vision_processor
-        self.max_episode_time = max_episode_time  # 5 minutes for Task 3
+        self.max_episode_time = max_episode_time  # 2 minutes for Task 3
         self.step_count = 0
         
         # Image saving configuration
@@ -282,8 +282,8 @@ class RobotEnvironment:
         # Can be configured via terminal script: --collision-threshold 0.95
         self.collision_threshold = collision_threshold
         
-        # Phase-specific action sets
-        self.use_phase_specific_actions = True  # Enable phase-specific actions
+        # Phase-specific action sets - disabled to use universal actions
+        self.use_phase_specific_actions = False  # Use universal actions across all phases
         
         # Universal action set (original)
         self.universal_actions = [
@@ -299,15 +299,15 @@ class RobotEnvironment:
         
         # Phase-specific action sets
         self.phase_actions = {
-            0: [  # Phase 0: Object Detection - Systematic right turn search only
+            0: [  # Phase 0: Object Detection - Systematic search with varied turning
                 (5, -5),   # 0: Turn Right Very Slight
-                (5, -5),   # 0: Turn Right Very Slight
-                (5, -5),   # 0: Turn Right Very Slight
-                (5, -5),   # 0: Turn Right Very Slight
-                (5, -5),   # 0: Turn Right Very Slight
-                (5, -5),   # 0: Turn Right Very Slight
-                (5, -5),   # 0: Turn Right Very Slight
-                (5, -5),   # 0: Turn Right Very Slight
+                (5, -5),   # 1: Turn Right Very Slight
+                (5, -5),   # 2: Turn Right Very Slight
+                (-5, 5),   # 3: Turn Left Very Slight
+                (-5, 5),   # 4: Turn Left Very Slight
+                (30, -15), # 5: Turn Right Slight
+                (-15, 30), # 6: Turn Left Slight
+                (5, -5),   # 7: Turn Right Very Slight
             ],
             1: [  # Phase 1: Object Collection - Forward only when object is detected
                 (60, 60),    # 0: Forward
@@ -319,22 +319,22 @@ class RobotEnvironment:
                 (60, 60),    # 6: Forward
                 (60, 60),    # 7: Forward
             ],
-            2: [  # Phase 2: Target Detection - Systematic right turn search only
-                (10, -10),   # 0: Turn Right Slight
-                (10, -10),   # 1: Turn Right Slight
-                (10, -10),   # 2: Turn Right Slight
-                (10, -10),   # 3: Turn Right Slight
-                (10, -10),   # 4: Turn Right Slight
-                (10, -10),   # 5: Turn Right Slight
-                (10, -10),   # 6: Turn Right Slight
-                (10, -10),   # 7: Turn Right Slight
+            2: [  # Phase 2: Target Detection - Enhanced systematic scanning while maintaining object contact
+                (20, 5),     # 0: Forward Right Gentle (slow systematic scan)
+                (5, 20),     # 1: Forward Left Gentle (slow systematic scan)
+                (25, 10),    # 2: Forward Right Moderate
+                (10, 25),    # 3: Forward Left Moderate  
+                (15, 15),    # 4: Forward Straight Slow (maintain object contact)
+                (30, 15),    # 5: Forward Right Slight
+                (15, 30),    # 6: Forward Left Slight
+                (20, 20),    # 7: Forward Straight Medium
             ],
-            3: [  # Phase 3: Push to Target - Forward only after alignment
+            3: [  # Phase 3: Push to Target - Forward with slight steering for alignment
                 (60, 60),    # 0: Forward
                 (60, 60),    # 1: Forward
                 (60, 60),    # 2: Forward
-                (60, 60),    # 3: Forward
-                (60, 60),    # 4: Forward
+                (50, 60),    # 3: Forward Slight Left
+                (60, 50),    # 4: Forward Slight Right
                 (60, 60),    # 5: Forward
                 (60, 60),    # 6: Forward
                 (60, 60),    # 7: Forward
@@ -343,22 +343,24 @@ class RobotEnvironment:
         
         # Phase action descriptions
         self.phase_action_descriptions = {
-            0: ["Turn Right Very Slight", "Turn Right Very Slight", "Turn Right Very Slight", "Turn Right Very Slight", 
-                "Turn Right Very Slight", "Turn Right Very Slight", "Turn Right Very Slight", "Turn Right Very Slight"],
+            0: ["Turn Right Very Slight", "Turn Right Very Slight", "Turn Right Very Slight", "Turn Left Very Slight", 
+                "Turn Left Very Slight", "Turn Right Slight", "Turn Left Slight", "Turn Right Very Slight"],
             1: ["Forward", "Forward", "Forward", "Forward", "Forward", "Forward", "Forward", "Forward"],
-            2: ["Turn Right Slight", "Turn Right Slight", "Turn Right Slight", "Turn Right Slight", 
-                "Turn Right Slight", "Turn Right Slight", "Turn Right Slight", "Turn Right Slight"],
-            3: ["Forward", "Forward", "Forward", "Forward", 
-                "Forward", "Forward", "Forward", "Forward"]
+            2: ["Forward Right Gentle", "Forward Left Gentle", "Forward Right Moderate", "Forward Left Moderate", 
+                "Forward Straight Slow", "Forward Right Slight", "Forward Left Slight", "Forward Straight Medium"],
+            3: ["Forward", "Forward", "Forward", "Forward Slight Left", 
+                "Forward Slight Right", "Forward", "Forward", "Forward"]
         }
         
         # Set initial action space based on phase
         self.current_phase_num = 0  # Start with phase 0
         self._update_action_space()
         
-        # State space: IR sensors (8) + vision data (6) = 14 dimensions
-        # Vision data: [object_detected, object_distance, object_angle, target_detected, target_distance, target_angle]
-        self.state_size = 14
+        # State space: Front IR sensor (1) + vision data (6) + collision detection (2) = 9 dimensions
+        # IR: [front_center_ir] - only essential sensor for object manipulation
+        # Vision: [object_detected, object_distance, object_angle, target_detected, target_distance, target_angle]  
+        # Collision: [front_collision, object_in_range] - derived boolean features
+        self.state_size = 9
         
         # Task 3 specific tracking
         self.task_completed = False
@@ -380,6 +382,7 @@ class RobotEnvironment:
         # Action history for temporal learning and grace periods
         self.action_history = deque(maxlen=10)  # Track last 10 actions
         self.reward_history = deque(maxlen=10)  # Track last 10 rewards
+        self.centering_reward_history = deque(maxlen=5)  # Track last 5 centering rewards for oscillation buffer
         self.grace_period_steps = 3  # Steps to wait before penalizing certain actions
         
         # Phase 1 -> Phase 2 transition tracking using raw IR sensors
@@ -408,28 +411,23 @@ class RobotEnvironment:
         self.reset()
 
     def _update_action_space(self):
-        """Update action space based on current phase"""
-        if self.use_phase_specific_actions and self.current_phase_num in self.phase_actions:
-            self.actions = self.phase_actions[self.current_phase_num]
-            self.action_space_size = len(self.actions)
-            self.action_descriptions = self.phase_action_descriptions[self.current_phase_num]
-            print(f"Phase {self.current_phase_num}: Updated to {self.action_space_size} actions: {self.action_descriptions}")
-        else:
-            # Fallback to universal actions
-            self.actions = self.universal_actions
-            self.action_space_size = len(self.actions)
-            self.action_descriptions = [
-                "Backward", "Turn Left", "Turn Left Slight", "Forward Left", 
-                "Forward", "Forward Right", "Turn Right Slight", "Turn Right"
-            ]
+        """Update action space to use universal actions across all phases"""
+        # Always use universal actions regardless of phase
+        self.actions = self.universal_actions
+        self.action_space_size = len(self.actions)
+        self.action_descriptions = [
+            "Backward", "Turn Left", "Turn Left Slight", "Forward Left", 
+            "Forward", "Forward Right", "Turn Right Slight", "Turn Right"
+        ]
+        print(f"Phase {self.current_phase_num}: Using universal action space ({self.action_space_size} actions)")
 
     def _transition_to_phase(self, new_phase: int, reason: str = ""):
-        """Transition to a new phase and update action space"""
+        """Transition to a new phase while maintaining universal action space"""
         if new_phase != self.current_phase_num:
             old_phase = self.current_phase_num
             self.current_phase_num = new_phase
             self.phase_history.append((old_phase, new_phase, self.step_count, reason))
-            self._update_action_space()
+            # Action space doesn't change when using universal actions
             print(f"Phase transition: {old_phase} -> {new_phase} (Step {self.step_count}): {reason}")
 
     def get_action_space_size(self):
@@ -479,6 +477,11 @@ class RobotEnvironment:
         # Reset collision state tracking
         self.last_collision_step = -1
         
+        # Reset oscillation and reward tracking
+        self.action_history.clear()
+        self.reward_history.clear()
+        self.centering_reward_history.clear()
+        
         # Reset object-target tracking
         self.last_object_position = None
         self.last_target_position = None
@@ -492,11 +495,15 @@ class RobotEnvironment:
         self.green_disappearance_count = 0
         self.last_green_seen_step = 0
         
+        # Reset Phase 3 fallback tracking
+        self.green_loss_count_phase3 = 0
+        self.green_last_y_position = 0.5  # Default to middle of image
+        
         # Debug: Check initial state and camera setup
         self._debug_camera_position()
         initial_state = self._get_state()
-        ir_raw = self.robot.read_irs()
-        print(f"Reset - IR readings: {ir_raw[:4]}, Task completed: {self.task_completed}")
+        front_center_ir = self.robot.read_irs()[4] if self.robot.read_irs()[4] is not None else 1.0
+        print(f"Reset - Front Center IR: {front_center_ir:.6f}, State size: {len(initial_state)}, Task completed: {self.task_completed}")
         
         return initial_state
     
@@ -589,22 +596,17 @@ class RobotEnvironment:
                 print(f"Warning: Could not save camera image: {e}")
                 
     def _get_state(self):
-        """Get current state representation for Task 3: [IR sensors + vision]"""
-        # IR sensors (8 dimensions) - Correct order: [BackL, BackR, FrontL, FrontR, FrontC, FrontRR, BackC, FrontLL]
+        """Get current state representation for Task 3: [Essential IR + Vision + Collision Features]"""
+        # Read all IR sensors but only use the essential ones
         ir_values = self.robot.read_irs()
-        ir_normalized = []
-        for val in ir_values:
-            if val is None:
-                ir_normalized.append(1.0)  # No detection = maximum distance
-            else:
-                # FIXED: Proper IR distance calculation
-                # IR values are intensity values, need to convert to distance
-                distance_mm = self.vision_processor._ir_intensity_to_distance(val)
-                # Normalize to [0,1] where 0=very close, 1=far/no detection
-                ir_normalized.append(min(distance_mm / 1000.0, 1.0))
         
-        # Vision data (6 dimensions: object_detected, object_distance, object_angle, target_detected, target_distance, target_angle)
-        # Use object-target relationship detection for comprehensive spatial awareness
+        # Essential IR sensor: Front Center only (index 4)
+        front_center_ir = ir_values[4] if ir_values[4] is not None else 1.0
+        # Convert IR intensity to normalized distance [0,1] where 0=very close, 1=far
+        distance_mm = self.vision_processor._ir_intensity_to_distance(front_center_ir)
+        front_center_normalized = min(distance_mm / 1000.0, 1.0)
+        
+        # Vision data (6 dimensions)
         vision_data = self._get_object_target_state()
         object_detected = vision_data[0]    # Binary: red object visible
         object_distance = vision_data[1]    # Normalized distance [0,1]
@@ -613,10 +615,18 @@ class RobotEnvironment:
         target_distance = vision_data[4]    # Normalized distance [0,1]
         target_angle = vision_data[5]       # Normalized angle [-1,1]
         
-        # Combine: 8 IR + 6 vision = 14 dimensions
-        state = np.array(ir_normalized + [object_detected, object_distance, object_angle, 
-                                         target_detected, target_distance, target_angle], 
-                        dtype=np.float32)
+        # Derived collision features (2 dimensions)
+        front_collision = 1.0 if front_center_normalized < 0.3 else 0.0  # Close obstacle/object
+        object_in_range = 1.0 if (object_detected > 0.5 and object_distance < 0.5) else 0.0  # Object within manipulation range
+        
+        # Combine: 1 IR + 6 vision + 2 collision = 9 dimensions
+        state = np.array([
+            front_center_normalized,  # Essential IR sensor
+            object_detected, object_distance, object_angle,  # Red object vision
+            target_detected, target_distance, target_angle,  # Green target vision
+            front_collision, object_in_range  # Derived collision features
+        ], dtype=np.float32)
+        
         return state
     
     def step(self, action_idx):
@@ -698,6 +708,9 @@ class RobotEnvironment:
             info['episode_complete'] = True
             info['success'] = self.task_completed
         
+        # Update action history for oscillation detection
+        self.action_history.append(action_idx)
+        
         # Check for task completion
         task_completed_this_step = self._check_task_completion()
         if task_completed_this_step:
@@ -715,9 +728,10 @@ class RobotEnvironment:
         reward = 0.0
         info = {}
         
-        # Basic info setup
-        ir_values = list(state[:8])
-        vision_values = list(state[8:])
+        # Extract state components (9-dimensional state)
+        front_center_ir = state[0]        # Essential IR sensor
+        vision_values = list(state[1:7])  # Vision data (6 dimensions)
+        collision_features = list(state[7:9])  # Collision features (2 dimensions)
         
         # Extract vision data
         object_detected = vision_values[0]    # Binary: red object visible
@@ -727,19 +741,23 @@ class RobotEnvironment:
         target_distance = vision_values[4]    # Normalized distance [0,1]
         target_angle = vision_values[5]       # Normalized angle [-1,1]
         
+        # Extract collision features
+        front_collision = collision_features[0]    # Close obstacle/object
+        object_in_range = collision_features[1]    # Object within manipulation range
+        
         # Phase-wise reward calculation
         if self.current_phase_num == 0:
             # Phase 0: Object Detection (vision-based search)
-            reward = self._calculate_phase0_reward(action_idx, ir_values, vision_values, info)
+            reward = self._calculate_phase0_reward(action_idx, front_center_ir, vision_values, info)
         elif self.current_phase_num == 1:
             # Phase 1: Object Collection (approach and collect)
-            reward = self._calculate_phase1_reward(action_idx, ir_values, vision_values, info)
+            reward = self._calculate_phase1_reward(action_idx, front_center_ir, vision_values, info)
         elif self.current_phase_num == 2:
             # Phase 2: Target Detection (search for green target)
-            reward = self._calculate_phase2_reward(action_idx, ir_values, vision_values, info)
+            reward = self._calculate_phase2_reward(action_idx, front_center_ir, vision_values, info)
         elif self.current_phase_num == 3:
             # Phase 3: Push to Target (move object to target)
-            reward = self._calculate_phase3_reward(action_idx, ir_values, vision_values, info)
+            reward = self._calculate_phase3_reward(action_idx, front_center_ir, vision_values, info)
         else:
             # Fallback: Basic forward movement reward
             if action_idx == 4:  # Forward action
@@ -751,18 +769,18 @@ class RobotEnvironment:
         info['action_description'] = self.action_descriptions[action_idx]
         info['object_detected'] = object_detected > 0.5
         info['target_detected'] = target_detected > 0.5
+        info['front_collision'] = front_collision > 0.5
+        info['object_in_range'] = object_in_range > 0.5
         
         return reward, info
 
-    def _calculate_phase0_reward(self, action_idx, ir_values, vision_values, info):
+    def _calculate_phase0_reward(self, action_idx, front_center_ir, vision_values, info):
         """Phase 0: Object Detection - Vision-based search for red object, fallback to front IR if not visible"""
         reward = 0.0
         # Extract vision data
         object_detected = vision_values[0]    # Binary: red object visible
         object_distance = vision_values[1]    # Normalized distance [0,1]
         object_angle = vision_values[2]       # Normalized angle [-1,1]
-        # Extract front center IR sensor only
-        front_center_ir = ir_values[4]  # FrontC only
         
         # Debug output for Phase 0 vision detection issues
         if self.step_count <= 20 or self.step_count % 10 == 0:
@@ -790,14 +808,22 @@ class RobotEnvironment:
                 print(f"    DEBUG: Image save failed: {e}")
         
         # 1. Vision-Based Detection
+        centering_reward = 0.0  # Track centering-specific reward for oscillation buffer logic
+        
         if object_detected > 0.5:
             reward += 10.0  # Base reward for vision detection
             abs_angle = abs(object_angle)
+            
+            # Calculate centering-specific rewards (for oscillation buffer logic)
             if abs_angle <= 0.20:
-                reward += 10.0  # Centered
+                centering_reward += 10.0  # Centered
+                reward += 10.0
             elif abs_angle <= 0.66:
-                reward += 3.0   # Side
+                centering_reward += 3.0   # Side
+                reward += 3.0
+                
             distance_reward = (1.0 - object_distance) * 5.0
+            centering_reward += distance_reward  # Distance also contributes to centering
             reward += distance_reward
             info['object_in_view'] = True
             
@@ -863,7 +889,7 @@ class RobotEnvironment:
             
         # Encourage systematic exploration if nothing detected
         if not info['object_in_view']:
-            # All actions in Phase 0 are right turns, so encourage systematic scanning
+            # Phase 0 has mixed actions (right and left turns), so encourage systematic scanning
             reward += 2.0  # Base turning reward for systematic search
         else:
             # If object detected, discourage continued turning to prevent overshooting
@@ -872,12 +898,136 @@ class RobotEnvironment:
                 reward += 1.0  # Small reward to encourage stopping when well positioned
             else:
                 reward += 2.0  # Normal turning reward
+        
+        # Reward for consecutive same actions (systematic searching)
+        if hasattr(self, 'action_history') and len(self.action_history) > 0:
+            if action_idx == self.action_history[-1]:  # Same action as previous step
+                consecutive_reward = 1.5  # Reward for consistent systematic scanning
+                reward += consecutive_reward
+                info['consecutive_action_bonus'] = True
+                
+                # Bonus for longer sequences of same action (up to a limit)
+                if len(self.action_history) >= 3:
+                    recent_actions = list(self.action_history)[-3:]
+                    if all(action == action_idx for action in recent_actions):
+                        extended_consecutive_reward = 1.0  # Additional bonus for sustained scanning
+                        reward += extended_consecutive_reward
+                        info['extended_consecutive_bonus'] = True
+        
+        # Apply oscillation penalty using greedy reward buffer logic
+        oscillation_penalty = self._detect_oscillation_and_apply_penalty(action_idx, centering_reward, info, "Phase0")
+        reward += oscillation_penalty  # oscillation_penalty is negative
+        
         info['object_angle'] = object_angle
         info['object_distance'] = object_distance
         info['front_center_ir'] = front_center_ir
         return reward
 
-    def _calculate_phase1_reward(self, action_idx, ir_values, vision_values, info):
+    def _detect_oscillation_and_apply_penalty(self, action_idx, centering_reward, info, phase_name="unknown"):
+        """
+        Detect oscillation patterns and apply penalty using greedy reward buffer logic.
+        Only penalize oscillation if it doesn't lead to better centering rewards.
+        
+        Args:
+            action_idx: Current action index
+            centering_reward: Current step's centering reward (distance/angle based)
+            info: Info dict to add debug information
+            phase_name: Name of current phase for debugging
+            
+        Returns:
+            oscillation_penalty: Penalty to subtract from reward (negative value)
+        """
+        oscillation_penalty = 0.0
+        
+        # Need at least 4 actions in history to detect oscillation pattern
+        if not hasattr(self, 'action_history') or len(self.action_history) < 3:
+            return oscillation_penalty
+            
+        # Track centering reward for greedy buffer logic
+        self.centering_reward_history.append(centering_reward)
+        
+        # Get recent action history
+        recent_actions = list(self.action_history)[-3:]  # Last 3 actions
+        recent_actions.append(action_idx)  # Include current action
+        
+        # Define action groups for Phase 0 and Phase 2 (turning actions)
+        if self.current_phase_num == 0:
+            # Phase 0: Very slight turns - actions 3,4 are left, actions 0,1,2,5,6,7 are right
+            left_actions = [3, 4]   # Turn left very slightly
+            right_actions = [0, 1, 2, 5, 6, 7]  # Turn right very slightly
+        elif self.current_phase_num == 2:
+            # Phase 2: Slight turns - actions 3,4 are left, actions 0,1,2,5,6,7 are right
+            left_actions = [3, 4]   # Turn left slightly  
+            right_actions = [0, 1, 2, 5, 6, 7]  # Turn right slightly
+        else:
+            # Phase 3 or other phases - no oscillation penalty needed
+            return oscillation_penalty
+            
+        # Detect alternating left-right pattern
+        oscillation_detected = False
+        
+        # Check for simple alternating pattern: L-R-L or R-L-R
+        if len(recent_actions) >= 3:
+            if ((recent_actions[-3] in left_actions and recent_actions[-2] in right_actions and recent_actions[-1] in left_actions) or
+                (recent_actions[-3] in right_actions and recent_actions[-2] in left_actions and recent_actions[-1] in right_actions)):
+                oscillation_detected = True
+                info[f'{phase_name}_oscillation_pattern'] = 'L-R-L or R-L-R'
+        
+        # Check for extended alternating pattern: L-R-L-R or R-L-R-L
+        if len(recent_actions) >= 4:
+            if ((recent_actions[-4] in left_actions and recent_actions[-3] in right_actions and 
+                 recent_actions[-2] in left_actions and recent_actions[-1] in right_actions) or
+                (recent_actions[-4] in right_actions and recent_actions[-3] in left_actions and 
+                 recent_actions[-2] in right_actions and recent_actions[-1] in left_actions)):
+                oscillation_detected = True
+                info[f'{phase_name}_oscillation_pattern'] = 'Extended L-R-L-R or R-L-R-L'
+        
+        # Apply greedy reward buffer logic if oscillation detected
+        if oscillation_detected:
+            # Check if recent centering rewards are improving (greedy buffer logic)
+            reward_improving = False
+            
+            if len(self.centering_reward_history) >= 3:
+                # Compare recent rewards - if trending upward, oscillation might be beneficial
+                recent_rewards = list(self.centering_reward_history)[-3:]
+                
+                # Check if rewards are generally increasing (allow for some variance)
+                if recent_rewards[-1] > recent_rewards[0] * 0.8:  # Current reward is at least 80% of reward 3 steps ago
+                    reward_improving = True
+                    info[f'{phase_name}_oscillation_beneficial'] = True
+                    
+                # Also check if the current reward is higher than the average of recent rewards
+                avg_recent_reward = sum(recent_rewards[:-1]) / len(recent_rewards[:-1]) if len(recent_rewards) > 1 else 0
+                if centering_reward > avg_recent_reward * 1.2:  # Current reward is 20% better than recent average
+                    reward_improving = True
+                    info[f'{phase_name}_oscillation_beneficial'] = True
+            
+            # Apply penalty only if oscillation is not beneficial
+            if not reward_improving:
+                base_penalty = -3.0  # Base oscillation penalty
+                
+                # Increase penalty for extended oscillation patterns
+                if 'Extended' in info.get(f'{phase_name}_oscillation_pattern', ''):
+                    base_penalty *= 1.5  # 50% more penalty for extended patterns
+                
+                oscillation_penalty = base_penalty
+                info[f'{phase_name}_oscillation_penalty_applied'] = True
+                info[f'{phase_name}_oscillation_penalty'] = oscillation_penalty
+                
+                # Debug output
+                if self.step_count % 10 == 0:
+                    print(f"  {phase_name} Oscillation penalty: {oscillation_penalty:.2f} "
+                          f"(pattern: {info.get(f'{phase_name}_oscillation_pattern', 'unknown')}, "
+                          f"reward_improving: {reward_improving})")
+            else:
+                info[f'{phase_name}_oscillation_allowed'] = True
+                if self.step_count % 10 == 0:
+                    print(f"  {phase_name} Oscillation allowed - rewards improving "
+                          f"(current: {centering_reward:.2f})")
+        
+        return oscillation_penalty
+
+    def _calculate_phase1_reward(self, action_idx, front_center_ir, vision_values, info):
         """Phase 1: Object Collection - Move straight, use vision + IR for robust transition"""
         reward = 0.0
         
@@ -886,12 +1036,9 @@ class RobotEnvironment:
         object_distance = vision_values[1]    # Normalized distance [0,1]
         object_angle = vision_values[2]       # Normalized angle [-1,1]
         
-        # Get raw IR values directly from robot for backup detection
-        raw_ir_values = self.robot.read_irs()
-        front_center_ir_intensity = raw_ir_values[4]  # Raw intensity from FrontC sensor
-        
-        # Convert raw IR intensity to actual distance
-        front_center_distance_mm = self.vision_processor._ir_intensity_to_distance(front_center_ir_intensity)
+        # front_center_ir is the normalized distance where 0=close, 1=far
+        # Convert normalized distance back to millimeters (max range ~1000mm)
+        front_center_distance_mm = front_center_ir * 1000.0
         
         # Add current distance reading to history (collect ALL readings per episode)
         self.front_ir_history.append(front_center_distance_mm)
@@ -902,7 +1049,7 @@ class RobotEnvironment:
         # Debug output for Phase 1 collection issues
         if self.step_count <= 20 or self.step_count % 10 == 0:
             print(f"  Phase 1 Debug - Vision: detected={object_detected:.3f}, distance={object_distance:.3f}, angle={object_angle:.3f}")
-            print(f"  Phase 1 Debug - IR: Distance={front_center_distance_mm:.1f}mm, Raw_IR={front_center_ir_intensity:.6f}")
+            print(f"  Phase 1 Debug - IR: Distance={front_center_distance_mm:.1f}mm, Normalized={front_center_ir:.6f}")
             print(f"  Phase 1 Debug - Close_readings={close_readings_count}/{len(self.front_ir_history)}, Need={self.required_close_readings} for IR transition")
         
         # Reward for moving forward (all actions in Phase 1 are forward)
@@ -945,8 +1092,16 @@ class RobotEnvironment:
                     if object_target_info.get('red_objects_found', False):
                         red_center_y = object_target_info.get('red_center_y', 0.5)  # Normalized Y position [0,1]
                         
-                        # Bottom section check: if object is in bottom 15% of image (Y > 0.85) - tuned threshold
-                        if red_center_y > 0.85:  # Bottom section of image - robot is touching object
+                        # Different thresholds for hardware vs simulation
+                        bottom_threshold = 0.75 if not self.is_simulation else 0.85
+                        approaching_threshold = 0.6 if not self.is_simulation else 0.7
+                        
+                        # Debug output for transition threshold
+                        if self.step_count <= 20 or self.step_count % 10 == 0:
+                            print(f"  Phase 1 Transition - Object Y={red_center_y:.3f}, Threshold={bottom_threshold:.2f} (Hardware optimized: {not self.is_simulation})")
+                        
+                        # Bottom section check: adjusted threshold for hardware robots
+                        if red_center_y > bottom_threshold:  # Bottom section - robot is touching object
                             reward += 100.0  # Big reward for successful collection via position
                             info['collection_complete'] = True
                             info['phase_transition_ready'] = True
@@ -955,13 +1110,13 @@ class RobotEnvironment:
                             self._transition_to_phase(2, f"Object collected via VISION POSITION - Y={red_center_y:.3f} (bottom section - robot touching) (READY FOR TARGET SEARCH)")
                         
                         # Progress reward for getting close to bottom
-                        elif red_center_y > 0.7:  # Bottom 30% of image - getting very close
+                        elif red_center_y > approaching_threshold:  # Getting very close
                             reward += 50.0
                             info['object_very_close'] = True
                             info['object_y_position'] = red_center_y
                         
                         # Progress reward for getting to bottom half
-                        elif red_center_y > 0.6:  # Bottom 40% of image - approaching
+                        elif red_center_y > 0.5 if not self.is_simulation else 0.6:  # Bottom half of image - approaching
                             reward += 20.0
                             info['object_approaching_bottom'] = True
                             info['object_y_position'] = red_center_y
@@ -970,21 +1125,27 @@ class RobotEnvironment:
                         
             except Exception as e:
                 print(f"Vision position check failed: {e}")
-                # Fall back to distance-based check
-                if object_distance <= 0.15:  # Very close fallback
+                # Fall back to distance-based check with hardware-specific threshold
+                distance_threshold = 0.25 if not self.is_simulation else 0.15  # Higher threshold for hardware
+                if object_distance <= distance_threshold:  # Distance-based fallback
                     reward += 80.0
                     info['collection_complete'] = True
                     info['phase_transition_ready'] = True
                     info['transition_method'] = 'vision_distance_fallback'
-                    self._transition_to_phase(2, f"Object collected via VISION DISTANCE FALLBACK - distance={object_distance:.3f} (READY FOR TARGET SEARCH)")
+                    info['is_hardware'] = not self.is_simulation
+                    self._transition_to_phase(2, f"Object collected via VISION DISTANCE FALLBACK - distance={object_distance:.3f} (Hardware: {not self.is_simulation}) (READY FOR TARGET SEARCH)")
         
         # BACKUP PHASE TRANSITION: IR-based detection (if vision completely fails)
-        elif close_readings_count >= self.required_close_readings:
+        # Reduced required readings for hardware robots to make transition more reliable
+        required_readings = self.required_close_readings // 2 if not self.is_simulation else self.required_close_readings
+        
+        if close_readings_count >= required_readings:
             reward += 60.0  # Lower reward for IR-based transition
             info['collection_complete'] = True
             info['phase_transition_ready'] = True
             info['transition_method'] = 'ir_backup'
-            self._transition_to_phase(2, f"Object collected via IR BACKUP - {close_readings_count}/{len(self.front_ir_history)} readings ≤{self.phase_transition_threshold_mm}mm (READY FOR TARGET SEARCH)")
+            info['is_hardware'] = not self.is_simulation
+            self._transition_to_phase(2, f"Object collected via IR BACKUP - {close_readings_count}/{len(self.front_ir_history)} readings ≤{self.phase_transition_threshold_mm}mm (Hardware: {not self.is_simulation}) (READY FOR TARGET SEARCH)")
             
         # Progress rewards
         elif object_detected > 0.5 and object_distance <= 0.3:  # Getting close via vision
@@ -1002,12 +1163,12 @@ class RobotEnvironment:
         info['object_distance_vision'] = object_distance
         info['object_angle_vision'] = object_angle
         info['front_c_distance_mm'] = front_center_distance_mm
-        info['front_c_ir_intensity'] = front_center_ir_intensity
+        info['front_c_ir_normalized'] = front_center_ir
         info['close_readings_count'] = close_readings_count
         info['total_readings'] = len(self.front_ir_history)
         return reward
 
-    def _calculate_phase2_reward(self, action_idx, ir_values, vision_values, info):
+    def _calculate_phase2_reward(self, action_idx, front_center_ir, vision_values, info):
         """Phase 2: Target Detection - Search for green target while having object"""
         reward = 0.0
         
@@ -1016,6 +1177,25 @@ class RobotEnvironment:
         target_detected = vision_values[3]    # Binary: green target visible
         target_distance = vision_values[4]    # Normalized distance [0,1]
         target_angle = vision_values[5]       # Normalized angle [-1,1]
+        
+        # Enhanced debugging for Phase 2 green detection issues
+        if self.step_count <= 20 or self.step_count % 15 == 0:
+            print(f"  Phase 2 Debug - Green detection: detected={target_detected:.3f}, angle={target_angle:.3f}, distance={target_distance:.3f}")
+            
+            # Additional detailed debugging for green detection issues
+            try:
+                camera_frame = self.robot.read_image_front()
+                if camera_frame is not None:
+                    corrected_frame = cv2.flip(camera_frame, -1)
+                    red_objects, green_targets, _ = self.vision_processor.detect_objects_and_target(corrected_frame)
+                    print(f"  Phase 2 Raw Detection - Green targets found: {len(green_targets)}")
+                    if green_targets:
+                        for i, target in enumerate(green_targets[:2]):  # Show first 2
+                            print(f"    Green {i+1}: area={target.get('area', 0)}, distance={target.get('distance', 0):.3f}, angle={target.get('angle', 0):.1f}°")
+                    else:
+                        print(f"    No green targets detected in raw detection")
+            except Exception as e:
+                print(f"  Phase 2 Debug error: {e}")
         
         # SAFETY CHECK: If red object is lost, fall back to Phase 0
         if object_detected <= 0.5:
@@ -1036,6 +1216,8 @@ class RobotEnvironment:
             self.object_loss_count = 0
         
         # 1. Target Detection Rewards
+        centering_reward = 0.0  # Track centering-specific reward for oscillation buffer logic
+        
         if target_detected > 0.5:  # Green target is visible
             # Base reward for finding target
             base_target_reward = 10.0
@@ -1047,15 +1229,18 @@ class RobotEnvironment:
             
             if abs_angle <= 0.33:  # Target in middle section
                 middle_reward = 15.0
+                centering_reward += middle_reward  # Track for oscillation buffer
                 reward += middle_reward
                 info['target_in_middle'] = True
             elif abs_angle <= 0.66:  # Target in side sections
                 side_reward = 5.0
+                centering_reward += side_reward  # Track for oscillation buffer
                 reward += side_reward
                 info['target_in_side'] = True
             
             # Distance-based reward (closer = better)
             distance_reward = (1.0 - target_distance) * 8.0
+            centering_reward += distance_reward  # Distance also contributes to centering
             reward += distance_reward
             info['target_distance_reward'] = distance_reward
             
@@ -1071,35 +1256,62 @@ class RobotEnvironment:
         else:
             info['target_in_view'] = False
         
-        # 2. Turning and Searching Rewards
-        # All actions in Phase 1 are turning actions for 360-degree search
+        # 2. Turning and Searching Rewards with Adaptive Strategy
+        # Phase 2 has mixed actions (right and left turns) for systematic search
         if target_detected <= 0.5:  # No target detected - encourage systematic search
+            # Initialize green search tracking if needed
+            if not hasattr(self, 'green_search_steps'):
+                self.green_search_steps = 0
+                self.green_last_seen_step = 0
+            
+            self.green_search_steps += 1
+            
             # Base turning reward for systematic search
             base_turning_reward = 2.0
             reward += base_turning_reward
             info['systematic_search'] = True
             
-            # Bonus for varied turning (avoid getting stuck)
-            if hasattr(self, 'action_history') and len(self.action_history) > 0:
-                if action_idx != self.action_history[-1]:  # Different from last action
-                    variety_bonus = 1.0
-                    reward += variety_bonus
-                    info['search_variety'] = True
+            # Adaptive search strategy: if green hasn't been seen for a while, encourage more diverse actions
+            steps_since_green = self.step_count - self.green_last_seen_step
+            if steps_since_green > 10:  # Haven't seen green for 10+ steps
+                # Encourage more varied turning actions
+                if action_idx in [0, 1, 2, 3]:  # Gentle/moderate actions for wider scanning
+                    adaptive_search_bonus = 3.0
+                    reward += adaptive_search_bonus
+                    info['adaptive_search_bonus'] = True
+        else:
+            # Green target detected - update tracking
+            if hasattr(self, 'green_search_steps'):
+                self.green_last_seen_step = self.step_count
+        
+        # Reward for consecutive same actions (systematic searching)
+        if hasattr(self, 'action_history') and len(self.action_history) > 0:
+            if action_idx == self.action_history[-1]:  # Same action as previous step
+                consecutive_reward = 1.5  # Reward for consistent systematic scanning
+                reward += consecutive_reward
+                info['consecutive_action_bonus'] = True
+                
+                # Bonus for longer sequences of same action (up to a limit)
+                if len(self.action_history) >= 3:
+                    recent_actions = list(self.action_history)[-3:]
+                    if all(action == action_idx for action in recent_actions):
+                        extended_consecutive_reward = 1.0  # Additional bonus for sustained scanning
+                        reward += extended_consecutive_reward
+                        info['extended_consecutive_bonus'] = True
         
         # 3. Maintain Object Proximity (ensure we don't lose the collected object)
         object_detected = vision_values[0]
-        front_c_ir = ir_values[4]  # FrontC sensor
         
-        if front_c_ir < 0.3:  # Object still close (maintain collection)
+        if front_center_ir < 0.3:  # Object still close (maintain collection)
             object_maintenance_reward = 3.0
             reward += object_maintenance_reward
             info['object_maintained'] = True
-        elif front_c_ir > 0.6:  # Object too far - penalty
+        elif front_center_ir > 0.6:  # Object too far - penalty
             object_loss_penalty = -5.0
             reward += object_loss_penalty
             info['object_lost'] = True
         
-        # 4. Prevent excessive spinning in one direction
+        # 4. Prevent excessive spinning in one direction and add green detection fallback
         if hasattr(self, 'action_history') and len(self.action_history) >= 3:
             recent_actions = list(self.action_history)[-3:]
             if len(set(recent_actions)) == 1:  # Same action repeated 3 times
@@ -1107,14 +1319,44 @@ class RobotEnvironment:
                 reward += repetition_penalty
                 info['repetitive_search'] = True
         
+        # 5. Green Detection Fallback - if green not detected for extended period, suggest wider search
+        if not hasattr(self, 'steps_without_green'):
+            self.steps_without_green = 0
+            
+        if target_detected <= 0.5:
+            self.steps_without_green += 1
+            
+            # If green hasn't been detected for a long time, apply progressive penalties and suggest wider turns
+            if self.steps_without_green > 25:  # 25+ steps without green detection
+                if self.steps_without_green % 10 == 0:  # Every 10 steps, print warning
+                    print(f"⚠️  Phase 2 Warning: Green target not detected for {self.steps_without_green} steps")
+                
+                # Progressive penalty for extended green detection failure
+                extended_failure_penalty = -1.0 * min(3.0, self.steps_without_green / 10.0)
+                reward += extended_failure_penalty
+                info['extended_green_failure'] = True
+                
+                # Encourage actions that provide wider coverage (gentle turns)
+                if action_idx in [0, 1]:  # Gentle turns for wider scanning
+                    wider_search_bonus = 2.0
+                    reward += wider_search_bonus
+                    info['wider_search_encouraged'] = True
+        else:
+            # Reset counter when green is detected
+            self.steps_without_green = 0
+        
+        # Apply oscillation penalty using greedy reward buffer logic
+        oscillation_penalty = self._detect_oscillation_and_apply_penalty(action_idx, centering_reward, info, "Phase2")
+        reward += oscillation_penalty  # oscillation_penalty is negative
+        
         # Store additional info for debugging
         info['target_angle'] = target_angle
         info['target_distance'] = target_distance
-        info['front_c_ir'] = front_c_ir
+        info['front_center_ir'] = front_center_ir
         
         return reward
 
-    def _calculate_phase3_reward(self, action_idx, ir_values, vision_values, info):
+    def _calculate_phase3_reward(self, action_idx, front_center_ir, vision_values, info):
         """Phase 3: Push to Target - Navigate and push object to target"""
         reward = 0.0
         
@@ -1124,8 +1366,7 @@ class RobotEnvironment:
         target_distance = vision_values[4]    # Normalized distance [0,1]
         target_angle = vision_values[5]       # Normalized angle [-1,1]
         
-        # Extract front center IR for object maintenance
-        front_center_ir = ir_values[4]  # FrontC
+        # Front center IR already passed as parameter (no need to extract)
         
         # SAFETY CHECK: If red object is lost, fall back to Phase 0
         if object_detected <= 0.5:
@@ -1145,24 +1386,39 @@ class RobotEnvironment:
             # Reset loss counter if object is visible
             self.object_loss_count_phase3 = 0
         
-        # 1. Forward Movement Rewards
-        # Encourage only straight forward movement since alignment was done in Phase 1
-        if action_idx == 1:  # Forward (straight)
+        # 1. Forward Movement Rewards with Alignment Assistance
+        if action_idx in [0, 1, 2, 5, 6, 7]:  # Forward (straight)
             forward_reward = 15.0
             reward += forward_reward
             info['forward_movement'] = True
-        elif action_idx == 3:  # Fast Forward (decisive pushing)
-            fast_forward_reward = 20.0  # Highest reward for aggressive pushing
-            reward += fast_forward_reward
-            info['fast_forward'] = True
-        elif action_idx == 6:  # Medium Forward (steady push)
-            medium_forward_reward = 12.0
-            reward += medium_forward_reward
-            info['medium_forward'] = True
-        # No rewards for other movements since robot should already be aligned
+        elif action_idx == 3:  # Forward Slight Left
+            forward_left_reward = 12.0
+            reward += forward_left_reward
+            info['forward_slight_left'] = True
+        elif action_idx == 4:  # Forward Slight Right
+            forward_right_reward = 12.0
+            reward += forward_right_reward
+            info['forward_slight_right'] = True
         
         # 2. Distance-Based Rewards: Green Target Area Coverage
         if target_detected > 0.5:
+            # Reset green target loss counter when target is visible
+            if hasattr(self, 'green_loss_count_phase3'):
+                self.green_loss_count_phase3 = 0
+            
+            # Update last known Y position for fallback logic by accessing vision processor directly
+            try:
+                camera_frame = self.robot.read_image_front()
+                if camera_frame is not None:
+                    corrected_frame = cv2.flip(camera_frame, -1)
+                    object_target_info = self.vision_processor.get_object_target_info_dict(corrected_frame)
+                    if object_target_info.get('green_targets_found', False):
+                        self.green_last_y_position = object_target_info.get('green_center_y', 0.5)
+            except Exception as e:
+                # If we can't get Y position, use a default
+                if not hasattr(self, 'green_last_y_position'):
+                    self.green_last_y_position = 0.5
+            
             # Base reward for keeping target in view
             target_view_reward = 5.0
             reward += target_view_reward
@@ -1191,21 +1447,103 @@ class RobotEnvironment:
                     reward += completion_bonus
                     info['task_completion_imminent'] = True
             
-            # Directional alignment reward (target should be centered for straight push)
+            # Enhanced Center Alignment Rewards (similar to Phase 2)
             abs_angle = abs(target_angle)
-            if abs_angle <= 0.2:  # Target well-centered
-                alignment_reward = 10.0
-                reward += alignment_reward
-                info['target_aligned'] = True
+            
+            # Very precise center alignment (best case)
+            if abs_angle <= 0.1:  # Target very well-centered
+                perfect_alignment_reward = 25.0  # Increased from 15.0
+                reward += perfect_alignment_reward
+                info['target_perfectly_aligned'] = True
+                
+                # Bonus for forward actions when perfectly aligned
+                if action_idx in [0, 1, 2, 5, 6, 7]:  # Straight forward
+                    alignment_forward_bonus = 10.0  # Increased from 5.0
+                    reward += alignment_forward_bonus
+                    info['perfect_alignment_forward_bonus'] = True
+                    
+            # Good center alignment
+            elif abs_angle <= 0.2:  # Target well-centered
+                good_alignment_reward = 20.0  # Increased from 10.0
+                reward += good_alignment_reward
+                info['target_well_aligned'] = True
+                
+                # Use steering actions to correct slight misalignment
+                if target_angle < 0 and action_idx == 3:  # Target left, steer left
+                    steering_correction_bonus = 8.0  # Increased from 3.0
+                    reward += steering_correction_bonus
+                    info['steering_correction_left'] = True
+                elif target_angle > 0 and action_idx == 4:  # Target right, steer right
+                    steering_correction_bonus = 8.0  # Increased from 3.0
+                    reward += steering_correction_bonus
+                    info['steering_correction_right'] = True
+                    
+            # Reasonable center alignment
             elif abs_angle <= 0.4:  # Reasonably centered
-                partial_alignment_reward = 5.0
+                partial_alignment_reward = 10.0  # Increased from 5.0
                 reward += partial_alignment_reward
                 info['target_partially_aligned'] = True
+                
+                # Encourage appropriate steering for correction
+                if target_angle < -0.2 and action_idx == 3:  # Target significantly left, steer left
+                    major_steering_bonus = 12.0  # Increased from 4.0
+                    reward += major_steering_bonus
+                    info['major_steering_left'] = True
+                elif target_angle > 0.2 and action_idx == 4:  # Target significantly right, steer right
+                    major_steering_bonus = 12.0  # Increased from 4.0
+                    reward += major_steering_bonus
+                    info['major_steering_right'] = True
+                    
+            # Poor alignment - stronger penalty for straight forward, encourage steering
+            else:
+                # Strong penalty for moving forward when target is not centered
+                if action_idx in [0, 1, 2, 5, 6, 7]:  # Straight forward when misaligned
+                    misalignment_penalty = -15.0  # Increased penalty from -3.0
+                    reward += misalignment_penalty
+                    info['misalignment_penalty'] = True
+                
+                # Reward steering actions when poorly aligned
+                if target_angle < -0.3 and action_idx == 3:  # Target far left, steer left
+                    corrective_steering_reward = 8.0
+                    reward += corrective_steering_reward
+                    info['corrective_steering_left'] = True
+                elif target_angle > 0.3 and action_idx == 4:  # Target far right, steer right
+                    corrective_steering_reward = 8.0
+                    reward += corrective_steering_reward
+                    info['corrective_steering_right'] = True
         else:
-            # Penalty for losing sight of target
+            # GREEN TARGET LOST - Handle fallback logic
             target_lost_penalty = -8.0
             reward += target_lost_penalty
             info['target_lost'] = True
+            
+            # Initialize green target loss tracking if needed
+            if not hasattr(self, 'green_loss_count_phase3'):
+                self.green_loss_count_phase3 = 0
+                self.green_last_y_position = 0.5  # Track last known position
+            
+            self.green_loss_count_phase3 += 1
+            
+            # FALLBACK LOGIC: If green target is lost for several steps AND it wasn't from bottom disappearance,
+            # transition back to Phase 2 for re-detection
+            if self.green_loss_count_phase3 >= 7:  # Lost for 7 consecutive steps
+                # Check if this is NOT a completion scenario (target disappearing from bottom)
+                # Get the task completion tracking to see if target was in bottom
+                completion_in_progress = False
+                if hasattr(self, 'green_bottom_tracking'):
+                    tracking = self.green_bottom_tracking
+                    # If target was in bottom section and is now disappearing, this might be completion
+                    if tracking.get('was_in_bottom', False) and tracking.get('bottom_steps_count', 0) >= 2:
+                        completion_in_progress = True
+                
+                # Only fallback if this is NOT a completion scenario
+                if not completion_in_progress:
+                    # Also check if last known position was not in bottom area (Y > 0.8)
+                    if self.green_last_y_position <= 0.8:
+                        reward += -25.0  # Penalty for losing green target in Phase 3
+                        info['green_target_lost_fallback'] = True
+                        self._transition_to_phase(2, f"GREEN TARGET LOST in Phase 3 - falling back to Phase 2 for re-detection (lost for {self.green_loss_count_phase3} steps, last Y pos: {self.green_last_y_position:.3f})")
+                        return reward
         
         # 3. Object Maintenance (ensure we're still pushing the object)
         if front_center_ir < 0.3:
@@ -1346,7 +1684,7 @@ class RobotEnvironment:
         
         Task 3 completion depends on the current phase:
         - Phase 0-2: Not yet ready for completion
-        - Phase 3: Complete when green target disappears (robot pushed object onto target)
+        - Phase 3: Complete when green target moves to bottom of image and disappears from bottom edge
         
         Returns:
             bool: True if task is completed, False otherwise
@@ -1360,47 +1698,80 @@ class RobotEnvironment:
             if camera_frame is None:
                 return False
             
-            # Get object-target relationship from vision
-            object_target_info = self.vision_processor.get_object_target_info_dict(camera_frame)
+            # Apply image correction for phone camera orientation
+            corrected_frame = cv2.flip(camera_frame, -1)  # 180° rotation for reversed phone camera
             
-            # PHASE 3 COMPLETION CRITERIA: Green target disappears
-            # This indicates the robot has pushed the object onto the green target
+            # Get object-target relationship from vision
+            object_target_info = self.vision_processor.get_object_target_info_dict(corrected_frame)
+            
+            # PHASE 3 COMPLETION CRITERIA: Green target moves to bottom and disappears from bottom edge
             green_targets_found = object_target_info.get('green_targets_found', False)
             
-            # Initialize green disappearance tracking if needed
-            if not hasattr(self, 'green_disappearance_count'):
-                self.green_disappearance_count = 0
-                self.last_green_seen_step = 0
+            # Initialize tracking variables if needed
+            if not hasattr(self, 'green_bottom_tracking'):
+                self.green_bottom_tracking = {
+                    'was_in_bottom': False,
+                    'bottom_steps_count': 0,
+                    'disappeared_from_bottom': False,
+                    'disappearance_count': 0,
+                    'last_green_y_position': 0.5
+                }
             
-            # Track green target visibility
+            tracking = self.green_bottom_tracking
+            
             if green_targets_found:
-                # Green target is visible - reset disappearance counter
-                self.green_disappearance_count = 0
-                self.last_green_seen_step = self.step_count
+                # Get green target position
+                green_center_y = object_target_info.get('green_center_y', 0.5)  # Normalized Y position [0,1]
+                tracking['last_green_y_position'] = green_center_y
+                
+                # Check if target is in bottom section of image (Y > 0.8 means bottom 20%)
+                if green_center_y > 0.8:
+                    tracking['was_in_bottom'] = True
+                    tracking['bottom_steps_count'] += 1
+                    tracking['disappearance_count'] = 0  # Reset disappearance counter
+                    
+                    # Debug: Target is in bottom section
+                    if self.step_count % 5 == 0:
+                        print(f"  Phase 3 Debug - Green target in BOTTOM section: Y={green_center_y:.3f}, bottom_steps={tracking['bottom_steps_count']}")
+                else:
+                    # Target visible but not in bottom
+                    tracking['disappearance_count'] = 0  # Reset disappearance counter
+                    
             else:
-                # Green target not visible - increment disappearance counter
-                self.green_disappearance_count += 1
-            
-            # Task completion: Green has disappeared for enough consecutive steps
-            # This indicates robot is on top of the target
-            required_disappearance_steps = 5  # Need 5 consecutive steps without green
-            
-            if self.green_disappearance_count >= required_disappearance_steps:
-                print(f"🎯 PHASE 3 Task completion detected!")
-                print(f"   Green target disappeared for {self.green_disappearance_count} consecutive steps")
-                print(f"   Last seen green at step {self.last_green_seen_step}, current step {self.step_count}")
-                print(f"   Robot successfully pushed object onto target!")
-                return True
+                # Green target not visible
+                tracking['disappearance_count'] += 1
+                
+                # Check if target disappeared after being in bottom section
+                if tracking['was_in_bottom'] and tracking['bottom_steps_count'] >= 2:
+                    # Target was in bottom for at least 2 steps and now disappeared
+                    # This indicates successful pushing onto target
+                    
+                    # Require several consecutive steps of disappearance to confirm completion
+                    required_disappearance_steps = 5
+                    
+                    if tracking['disappearance_count'] >= required_disappearance_steps:
+                        print(f"🎯 PHASE 3 Task completion detected!")
+                        print(f"   Green target was in bottom section for {tracking['bottom_steps_count']} steps")
+                        print(f"   Last Y position: {tracking['last_green_y_position']:.3f} (bottom threshold: 0.8)")
+                        print(f"   Disappeared for {tracking['disappearance_count']} consecutive steps")
+                        print(f"   Robot successfully pushed object onto target from bottom!")
+                        return True
+                elif not tracking['was_in_bottom']:
+                    # Target disappeared but was never in bottom section - not completion
+                    # This could be target moving out of view sideways or upward
+                    if tracking['disappearance_count'] >= 10:  # Reset after long disappearance
+                        tracking['was_in_bottom'] = False
+                        tracking['bottom_steps_count'] = 0
+                        tracking['disappearance_count'] = 0
             
             # Debug info for Phase 3
             if self.step_count % 10 == 0:
-                print(f"  Phase 3 Debug - Green visible: {green_targets_found}, "
-                      f"Disappearance count: {self.green_disappearance_count}/{required_disappearance_steps}")
+                print(f"  Phase 3 Debug - Green visible: {green_targets_found}")
+                if green_targets_found:
+                    print(f"                  Y position: {tracking['last_green_y_position']:.3f}, in_bottom: {tracking['last_green_y_position'] > 0.8}")
+                print(f"                  Bottom tracking: was_in_bottom={tracking['was_in_bottom']}, bottom_steps={tracking['bottom_steps_count']}")
+                print(f"                  Disappearance: {tracking['disappearance_count']} steps")
             
-            return False
-            
-        except Exception as e:
-            print(f"Error checking task completion: {e}")
             return False
             
         except Exception as e:
@@ -1431,12 +1802,12 @@ class ObjectPushVisionProcessor:
         self.red_upper2 = np.array([180, 255, 255])  # Second red range (wraparound)
         
         # Green color range for target area detection (HSV)
-        # Optimized for detecting the green target zone
-        self.green_lower = np.array([35, 50, 50])    # Lower HSV threshold for green
+        # Optimized for detecting the green target zone with more robust parameters
+        self.green_lower = np.array([35, 30, 30])    # Lower HSV threshold for green (reduced saturation/value for better detection)
         self.green_upper = np.array([85, 255, 255])  # Upper HSV threshold for green
         
         # Detection parameters
-        self.min_contour_area = 100      # Minimum pixels for valid detection
+        self.min_contour_area = 80       # Minimum pixels for valid detection (reduced for better green detection)
         self.max_detection_distance = 3.0 # Maximum detection range (meters)
         
         # Noise filtering
@@ -1504,9 +1875,15 @@ class ObjectPushVisionProcessor:
             
             detected_objects = []
             
+            # Use different minimum area thresholds for different object types
+            if object_type == "green":
+                min_area = max(50, self.min_contour_area * 0.6)  # More lenient for green targets
+            else:
+                min_area = self.min_contour_area
+            
             for contour in contours:
                 area = cv2.contourArea(contour)
-                if area > self.min_contour_area:
+                if area > min_area:
                     # Calculate object properties
                     object_info = self._analyze_object_contour(contour, frame_shape, object_type)
                     if object_info:
@@ -1739,7 +2116,7 @@ class ObjectPushVisionProcessor:
     # ...existing code...
 def object_pushing_task3(rob: IRobobo, agent_type: str = 'dqn', mode: str = 'train', 
                          num_episodes: int = 100, collision_threshold: float = 0.95,
-                         model_path: Optional[str] = None, max_episode_time: int = 300,
+                         model_path: Optional[str] = None, max_episode_time: int = 120,
                          learning_rate: float = 0.001, gamma: float = 0.99,
                          epsilon: float = 1.0, epsilon_decay: float = 0.995,
                          epsilon_min: float = 0.01, save_freq: int = 100,
@@ -1848,7 +2225,7 @@ def object_pushing_task3(rob: IRobobo, agent_type: str = 'dqn', mode: str = 'tra
             
             print(f"\n📍 Episode {episode + 1}/{num_episodes}")
             
-            while not done and step_count < 1800:  # 3 minutes at 10 Hz
+            while not done and step_count < 1200:  # 2 minutes at 10 Hz (matches max_episode_time of 120 seconds)
                 # Agent selects action
                 if hasattr(agent, 'act'):
                     action = agent.act(state)
@@ -1880,9 +2257,17 @@ def object_pushing_task3(rob: IRobobo, agent_type: str = 'dqn', mode: str = 'tra
                 if step_count % 50 == 0:
                     task_completed = info.get('task_completed', False)
                     time_elapsed = time.time() - episode_start_time
+                    
+                    # Debug episode termination - print environment's internal time tracking
+                    if hasattr(env.robot, 'get_sim_time'):
+                        env_time_elapsed = env.robot.get_sim_time() - env.episode_start_time if env.episode_start_time else 0
+                    else:
+                        env_time_elapsed = time.time() - env.episode_start_time if env.episode_start_time else 0
+                    
                     action_name = env.action_descriptions[action]
                     print(f"  Step {step_count:3d} | Task: {'✅' if env.task_completed else '❌'} | "
-                          f"Time: {time_elapsed:.1f}s | Reward: {total_reward:.1f} | "
+                          f"Time: {time_elapsed:.1f}s | Env Time: {env_time_elapsed:.1f}s | "
+                          f"Max Time: {env.max_episode_time}s | Reward: {total_reward:.1f} | "
                           f"Action: {action_name}")
             
             # Episode complete
@@ -1941,7 +2326,7 @@ def object_pushing_task3(rob: IRobobo, agent_type: str = 'dqn', mode: str = 'tra
             
             print(f"\n📍 Evaluation Episode {episode + 1}/{num_episodes}")
             
-            while not done and step_count < 3000:  # 5 minutes at 10 Hz
+            while not done and step_count < 1200:  # 2 minutes at 10 Hz (matches max_episode_time of 120 seconds)
                 # Agent selects action (no exploration in evaluation mode)
                 if hasattr(agent, 'act'):
                     action = agent.act(state, training=False)
@@ -1963,7 +2348,18 @@ def object_pushing_task3(rob: IRobobo, agent_type: str = 'dqn', mode: str = 'tra
                 if step_count % 50 == 0:
                     task_completed = info.get('task_completed', False)
                     time_elapsed = time.time() - episode_start_time
+                    
+                    # Debug episode termination - print environment's internal time tracking
+                    if hasattr(env.robot, 'get_sim_time'):
+                        env_time_elapsed = env.robot.get_sim_time() - env.episode_start_time if env.episode_start_time else 0
+                    else:
+                        env_time_elapsed = time.time() - env.episode_start_time if env.episode_start_time else 0
+                    
                     action_name = env.action_descriptions[action]
+                    print(f"  Step {step_count:3d} | Task: {'✅' if env.task_completed else '❌'} | "
+                          f"Time: {time_elapsed:.1f}s | Env Time: {env_time_elapsed:.1f}s | "
+                          f"Max Time: {env.max_episode_time}s | Reward: {total_reward:.1f} | "
+                          f"Action: {action_name}")
                     print(f"  Step {step_count:3d} | Task: {'✅' if env.task_completed else '❌'} | "
                           f"Time: {time_elapsed:.1f}s | Reward: {total_reward:.1f} | "
                           f"Action: {action_name}")
@@ -2262,39 +2658,22 @@ def test_object_vision_system(rob: IRobobo):
         
         # Get camera image
         image = rob.read_image_front()
-        
-        if image is None:
-            print("Failed to capture image")
-            continue
-        
-        # Test object and target detection
-        object_target_info = vision_processor.get_object_target_relationship(image)
-        
-        print(f"  Red objects: {object_target_info['red_objects_found']}")
-        print(f"  Green targets: {object_target_info['green_targets_found']}")
-        
-        if object_target_info['red_objects_found']:
-            print(f"  Red object at ({object_target_info['red_center_x']:.2f}, {object_target_info['red_center_y']:.2f})")
-            print(f"  Red object size: {object_target_info['red_size']:.3f}")
-        
-        if object_target_info['green_targets_found']:
-            print(f"  Green target at ({object_target_info['green_center_x']:.2f}, {object_target_info['green_center_y']:.2f})")
-            print(f"  Green target size: {object_target_info['green_size']:.3f}")
-        
-        if object_target_info['red_objects_found'] and object_target_info['green_targets_found']:
-            distance = abs(object_target_info['red_center_x'] - object_target_info['green_center_x'])
-            print(f"  Object-target distance: {distance:.3f}")
-        
-        # Save debug images
-        if isinstance(rob, SimulationRobobo):
-            filename = f"results/figures/vision_test_frame_{i+1}.png"
-            cv2.imwrite(filename, image)
-        
-        # Small rotation to get different views
-        rob.move(-5, 5)
-        time.sleep(0.5)
-        rob.move(0, 0)
-        time.sleep(0.5)
+    # Check if results contains the required data
+    if 'episode_rewards' not in results:
+        print(f"Warning: No episode_rewards in results, cannot generate training plot")
+        return None
+    
+    # Set up the plot
+    plt.figure(figsize=(12, 8))
+    
+    # Plot episode rewards
+    rewards = results['episode_rewards']
+    episodes = np.arange(1, len(rewards) + 1)
+    plt.subplot(2, 2, 1)
+    plt.plot(episodes, rewards, 'b-')
+    plt.title(f'Episode Rewards ({agent_type.upper()})')
+    plt.xlabel('Episode')
+    plt.ylabel('Total Reward')
     
     rob.move(0, 0)  # Stop
     print("\n===== VISION SYSTEM TESTING COMPLETE =====")

@@ -113,7 +113,7 @@ def get_default_hyperparameters(agent_type: str) -> dict:
             'gamma': 0.99,            # Higher discount for long-term rewards
             'memory_size': 50000,     # Larger buffer for diverse experiences
             'batch_size': 64,         # Larger batches for stable learning
-            'target_update_freq': 100 # Less frequent updates for stability
+            'target_update_freq': 50 # Less frequent updates for stability
         },
         'qlearning': {
             'learning_rate': 0.1,
